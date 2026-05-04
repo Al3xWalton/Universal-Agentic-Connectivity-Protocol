@@ -436,3 +436,61 @@ Third per-provider session. Validates UACP against AWS S3, a provider whose auth
 **Hard rules honored**: did not depend on boto3 or botocore (SigV4 from scratch); did not change Google or Slack code (SigV4 is purely additive in `auth/aws_sigv4.py` replacing the stub); .uacp files validate cleanly through `spec.loader.load()` after the §3.3 format-field amendment; did not push the repo. AWS's published SigV4 test suite anchored the implementation correctness — the IAM ListUsers worked example is the load-bearing test vector.
 
 **UACP commit plan**: 4 prototype/spec commits already landed. Single memory commit — `memory: UACP Stage 8c — AWS S3 / SigV4 prototype`. Operator pushes manually.
+
+---
+
+## 2026-05-04 — UACP Stage 8d — GitHub PAT prototype + RFC 8288 link-header pagination
+
+Fourth per-provider session. The shortest of the prototype-validation arc: `api_key_header` is the simplest auth shape in UACP's registry (just inject a header), so the meaty work was tightening the §3.4 `link_header` pagination implementation against RFC 8288's edge cases.
+
+**Spec repo commit chain on top of `feb8ae9` (Stage 8c memory tip)**:
+
+- `3cf63e7 feat(prototype): implement API-key authentication (header + query)` — `auth/api_key.py` with both §2.4 flavors. APIKeyHeaderMethod handles Authorization+Bearer (GitHub PATs, OpenAI, modern OAuth-issued), Authorization+Token (legacy), X-API-Key+empty (vendor-specific), and arbitrary header_name + header_prefix combinations. Header name preserves artifact case; key value passes through unchanged (long keys, base64 +/=, all fine). APIKeyQueryMethod returns query parameter delta + emits §2.4.2 disrecommendation warning via stdlib logging. **17 tests**.
+- `5ccd6e0 feat(prototype): implement RFC 8288 link-header pagination at dispatch` — `_parse_link_header` rewritten for full RFC 8288 conformance. Accepts string OR list[str] input. Comma-separated entry splitting respects angle brackets and quoted values (commas inside URIs or quoted titles aren't entry separators). Rel parameter case-insensitive per §3.3; space-separated multiple rels per entry register URI under each. Link parameters beyond rel tolerated. Quoted vs unquoted parameter values both accepted. Relative URIs resolved against the request URL per §3.4. Three helper functions exposed for testing: `_split_link_entries`, `_parse_link_entry`, `_is_absolute_uri`. The link_header pattern caller in `dispatch_paginated` passes the resolution base_url through (most-recent URL when already advanced, falling back to artifact base_url for the first page). **26 tests**.
+- `290490e fix(spec): §3.4 — RFC 8288 conformance rules for link_header pagination` — additive clarifying amendment. §3.4 link_header subsection enumerates seven RFC 8288 conformance rules (case-insensitive rel; space-separated multiple rels; multi-Link-header concatenation; relative-URI resolution; link parameters beyond rel tolerated; quoted/unquoted parameter values; commas inside angle-brackets or quotes preserved). Cross-origin termination from §4.4 still applies. The amendment specifies behavior that was implicit but unspecified — Conforming Implementations would have had to handle these cases to interoperate with real providers like GitHub; the spec just makes the requirements normative. Non-breaking per Principle 6 / §7.2.
+- `d7b9a8c feat(prototype): GitHub repos.get + repos.listForUser .uacp + integration tests` — `examples/github/repos-get.uacp` (GET /repos/{owner}/{repo} with Authorization: Bearer auth and GitHub's recommended Accept: application/vnd.github+json + X-GitHub-Api-Version: 2022-11-28 default headers) and `examples/github/repos-list-for-user.uacp` (GET /users/{username}/repos with link_header pagination). 6 mock-based end-to-end tests (including a three-page Link-header chain walk that exercises intermediate-page rel=prev/next/first/last and final-page rel=prev-without-rel=next termination) + 5 @pytest.mark.integration tests. README updated with GitHub setup section.
+
+**The §3.4 link_header conformance gap, the central spec finding of this session**:
+
+§3.4's link_header subsection was a one-paragraph punt — it said "follow RFC 8288's `Link` header" without enumerating which RFC 8288 conformance rules a Conforming Implementation MUST satisfy. The Stage 8a parser handled the typical `<url>; rel="next"` case but glossed over rel case-insensitivity, multiple rels per entry, multi-Link-header concatenation, relative-URI resolution, link parameters beyond rel, and the comma-inside-brackets edge case. Without spec backing, every Conforming Implementation would have to figure these out independently and likely diverge on real providers like GitHub. Path A again — additive clarifying amendment.
+
+**The two probe questions the brief flagged that turned out NOT to require spec changes**:
+
+- §2.4.1 "header injection cleanly expressed?" — Investigated; the existing `{method, header_name, header_prefix, key_ref}` shape covers Authorization+Bearer, X-API-Key+empty, Authorization+Token, and arbitrary vendor headers. No amendment needed.
+- "Multiple PAT format support stays clean?" — Investigated and confirmed clean. GitHub's three PAT formats (`ghp_`, `github_pat_`, `gho_`) all use the same `Authorization: Bearer <token>` wire shape. UACP doesn't distinguish them; the artifact says "API key in Authorization header"; the runtime injects whatever the secret store resolved. Format-agnosticism by design — exactly the right abstraction.
+
+**Aggregate test count**: **339 unit tests passing**, **20 integration tests deselected by default**, 0 failures. Run wall ~0.45s. Module-by-module:
+
+- test_smoke: 1 (unchanged)
+- test_spec_loader: 35 (unchanged)
+- test_oauth2_authcode: 18 (unchanged)
+- test_dispatch_client: 38 (unchanged)
+- test_pagination: 16 (unchanged — original Stage 8a smoke test + general pagination still passes against the upgraded parser)
+- test_lifecycle_state: 26 (unchanged)
+- test_refresh: 11 (unchanged)
+- test_secrets: 23 (unchanged)
+- test_ingest_openapi: 15 (unchanged)
+- test_end_to_end_mock: 5 (Google, unchanged)
+- test_oauth2_workspace: 23 (Stage 8b, unchanged)
+- test_envelope: 25 (Stage 8b, unchanged)
+- test_end_to_end_slack_mock: 5 (Stage 8b, unchanged)
+- test_aws_sigv4: 23 (Stage 8c, unchanged)
+- test_xml_response: 21 (Stage 8c, unchanged)
+- test_end_to_end_aws_mock: 5 (Stage 8c, unchanged)
+- test_api_key: 17 (NEW Stage 8d)
+- test_pagination_link_header: 26 (NEW Stage 8d)
+- test_end_to_end_github_mock: 6 (NEW Stage 8d)
+- providers/test_google: 5 (deselected)
+- providers/test_slack: 5 (deselected)
+- providers/test_aws: 5 (deselected)
+- providers/test_github: 5 (NEW Stage 8d, deselected)
+
+**Eight `.uacp` files validating** through `spec.loader.load()`: gmail-send, google-calendar-list, chat-postMessage, conversations-list, s3-getobject, s3-listobjectsv2, repos-get, repos-list-for-user.
+
+**Spec gaps surfaced**: ONE (§3.4 link_header conformance rules). Closed via path A — additive clarifying amendment.
+
+**No new entries to `docs/open-questions.md`** — link_header rules now spec-anchored; api_key shape needs no amendment; PAT format-agnosticism is a spec property not a gap.
+
+**Hard rules honored**: did not change Google, Slack, or AWS code; did not relitigate Stage 0-7 spec content beyond the §3.4 link_header amendment which was filed as `fix(spec):`; GitHub `.uacp` files validate cleanly through `spec.loader.load()`; did not push the repo; link-header pagination code is in `dispatch/pagination.py` (the generic location) not a GitHub-specific module — Atlassian, GitLab, and many other REST APIs that use the same RFC 8288 pattern get the same parser without changes.
+
+**UACP commit plan**: 4 prototype/spec commits already landed. Single memory commit — `memory: UACP Stage 8d — GitHub PAT prototype + link-header pagination`. Operator pushes manually.
