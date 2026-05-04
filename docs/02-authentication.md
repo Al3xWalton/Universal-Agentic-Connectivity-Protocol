@@ -39,7 +39,7 @@ Where a section in this document approaches one of those boundaries, the boundar
 
 Every `.uacp` artifact that requires authentication declares a single top-level `authentication` object. That object has a `method` field whose value is a stable string identifier drawn from the registry below. The remaining fields of the `authentication` object are method-specific and are specified in the section listed in the **Specified in** column.
 
-The `v1.0` registry contains nine `Authentication Method`s:
+The `v1.0` registry contains ten `Authentication Method`s:
 
 | Identifier | Family | Specified in |
 |---|---|---|
@@ -51,7 +51,10 @@ The `v1.0` registry contains nine `Authentication Method`s:
 | `api_key_query` | API key | §2.4.2 |
 | `aws_sigv4` | Signed request | §2.5.1 |
 | `hmac_signature` | Signed request | §2.5.2 |
+| `session_cookie` | Browser-equivalent | §2.10 |
 | `custom_auth` | Escape hatch | §2.6 |
+
+The `session_cookie` method (§2.10) is intended for undocumented or restricted-API providers reachable only through browser-equivalent session replay. It carries a higher operational risk than the other registered methods (replaying browser-captured cookies against an undocumented API may violate the provider's Terms of Service); §2.10 specifies the conformance and warning requirements that follow from that risk.
 
 Identifiers are lowercase ASCII, use underscores rather than hyphens, and contain no dots. They are the exact strings that appear in the `method` field; they are not abbreviations or aliases.
 
@@ -521,6 +524,91 @@ A `Conforming Implementation` MAY support or decline any registered method per i
 
 The combination of the additive-only rule and the silent-decline rule is what makes the method registry safe to extend: an old implementation encountering a new method refuses cleanly rather than misinterpreting; a new implementation always understands every old method.
 
+## 2.10 Session-cookie authentication (`session_cookie`)
+
+`session_cookie` is the registered method for `Provider`s that have no public API surface but are reachable via a web interface. The user logs in to the `Provider` through a browser; the browser-captured cookie state is stored; UACP replays the cookies on every dispatched request, with optional CSRF token refresh on `401`/`403`/`419` responses.
+
+The motivating use case is the long tail of useful services that lack documented APIs: research and notebook tools (Google NotebookLM is the canonical example, served only through the same RPC endpoint the web UI uses), internal enterprise dashboards reachable only through SSO, and consumer products whose reverse-engineered web APIs are the only access path. The reference implementation pattern is the open-source library `notebooklm-py` (https://github.com/teng-lin/notebooklm-py), which documents the cookie + CSRF dance for NotebookLM.
+
+This method carries higher operational risk than the other registered methods. Replaying browser-captured cookies against an undocumented or restricted API is a grey-zone practice — it may violate the `Provider`'s Terms of Service, and the credential blast radius equals a stolen browser cookie. UACP supports the method because the use case is real and unsupported by any other registered method; the conformance rules below ensure the risk is surfaced explicitly to operators.
+
+### Wire shape
+
+```json
+{
+  "method": "session_cookie",
+  "tos_acknowledged": true,
+  "storage_state_ref": "secret://local-keyring/notebooklm-storage-state",
+  "cookie_names": ["SID", "HSID", "SSID", "APISID", "SAPISID"],
+  "csrf_token": {
+    "header_name": "X-Same-Domain",
+    "cookie_name": "_csrf_token",
+    "refresh_url": "https://notebooklm.google.com/_/NotebookLmRpcs/csrf",
+    "extraction_path": "$.token",
+    "extraction_format": "json"
+  }
+}
+```
+
+Field requirements:
+
+- **`tos_acknowledged`** (required, boolean, MUST be `true`) — the operator's explicit acknowledgment that they have evaluated the `Provider`'s Terms of Service and accept responsibility for compatibility. A `Conforming Implementation` MUST refuse to load `.uacp` files using `session_cookie` when this field is absent or set to anything other than literal `true`. This is an audit hook: the field's presence in the artifact is the artifact author's signature on the ToS-violation-risk evaluation, and §3.10 validation enforces it.
+- **`storage_state_ref`** (required, string) — a `secret://` reference per §2.7 resolving to the cookie jar's contents. The cookie jar follows Playwright's [`storage_state.json`](https://playwright.dev/docs/api/class-browsercontext#browser-context-storage-state) format: a JSON object with a `cookies` array (each cookie has `name`, `value`, `domain`, `path`, `expires`, `httpOnly`, `secure`, `sameSite`) and optionally an `origins` array. UACP does not redefine the format.
+- **`cookie_names`** (optional, array of strings) — a whitelist of cookie names to send. When omitted or empty, all cookies in the storage state matching the request URL are sent. When non-empty, only listed names are sent — useful when the `Provider` sets analytics or non-auth cookies that aren't needed for replay and reduce the credential surface.
+- **`csrf_token`** (optional, object) — declares how a CSRF token is read and refreshed. Required for `Provider`s that enforce CSRF on the API endpoint; optional for those that don't.
+  - `header_name` (required when `csrf_token` is declared, string) — the HTTP header where the token is placed on outgoing requests.
+  - `cookie_name` (optional, string) — when the token is also a cookie, its name in the storage state. The dispatcher reads this cookie's value and replays it as the header.
+  - `refresh_url` (optional, string) — when `Provider` returns `401`/`403`/`419` indicating CSRF expiry, the dispatcher fetches this URL with current cookies, extracts a fresh token via `extraction_path`, and retries the original request once. Without `refresh_url`, the connection effectively expires whenever the CSRF rotates and re-capture is required.
+  - `extraction_path` (optional, string) — JSONPath in the §3.4 minimal subset (`$.field` / `$.field.subfield`) OR a regex with one capture group, depending on `extraction_format`.
+  - `extraction_format` (optional, string, default `json`) — `json` or `regex`.
+
+### Conformance
+
+A `Conforming Implementation` of `v1.x`:
+
+- **MAY** support `session_cookie`. The conformance level is `MAY` (lower than the `SHOULD` of registered grey-zone-free methods like AWS SigV4 and OAuth 1.0a) because of the operational risk. Implementations targeting curated `Provider` sets MAY decline session_cookie entirely; implementations covering the long tail SHOULD support it because it is the only reachable path for many useful services.
+- **MUST** surface a clear ToS-violation-risk warning to the operator at connection-creation time when supporting `session_cookie`. The warning MUST be surfaced through the implementation's user-facing surface (CLI message, UI banner, IDE notification, equivalent); a docstring or a buried log line is insufficient. The exact wording is implementation-defined; the warning MUST mention that replaying browser-captured cookies may violate the `Provider`'s Terms of Service.
+- **MUST** refuse to load `.uacp` files using `session_cookie` without `tos_acknowledged: true`. The §3.10 validator enforces this; the artifact's `authentication.tos_acknowledged` field MUST be present and MUST be the literal boolean `true` (not `"true"` string, not `1`, not absent). The refusal is `bad_input` per Principle 8.
+- **SHOULD** log every dispatch through a `session_cookie` connection at audit-log level INFO with a `risk: tos_violation_potential` field per §6.6's audit requirements. The audit trail is the operational evidence that the operator's ToS evaluation extends across the lifetime of the connection.
+
+### Cookie injection at request time
+
+Cookies are sent in the `Cookie` header per RFC 6265. The implementation reads the cookie jar, filters by domain matching per RFC 6265 §5.1.3 (exact match for host-only cookies; parent-domain match for cookies with a leading-dot domain), filters by path matching per §5.1.4, and gates `Secure` cookies on HTTPS per §4.1.2.5 (which §4.2 already mandates as the only permitted scheme).
+
+Cookie semantics across the request boundary:
+
+- `HttpOnly` cookies are honored: the flag is for the server-side, not the client. Replay is correct and intentional.
+- `Secure` cookies require HTTPS, which §4.2 already mandates.
+- `SameSite` restrictions don't apply to programmatic clients. The request isn't a browser navigation; the `SameSite=Lax` / `SameSite=Strict` rules are browser-side enforcement, not wire-level.
+
+When the storage state has no cookies matching the request URL (no domain match for any entry), the dispatcher MUST surface `auth_expired` per Principle 8 with a diagnostic message identifying the URL/domain mismatch. Continuing the request would either fail at the `Provider` or, worse, succeed without authentication and leak data into a public-API surface.
+
+### CSRF token handling
+
+When the `csrf_token` block is declared, the dispatcher's per-request flow:
+
+1. On every dispatch, read the current CSRF token (from runtime state if a refresh recently completed, otherwise from the cookie named in `csrf_token.cookie_name`).
+2. Add the token as the value of the header named `csrf_token.header_name`.
+3. Dispatch the request through the standard §4.2 transport.
+4. On `401`/`403`/`419` responses (per `Provider` convention; the dispatcher MAY widen to other statuses based on envelope inspection), invoke the refresh flow: fetch `csrf_token.refresh_url` with the current cookies, parse the response per `csrf_token.extraction_format`, extract the new token via `csrf_token.extraction_path`, update runtime state, retry the original request once.
+5. If the retry also fails, surface `auth_expired` with a diagnostic message indicating CSRF refresh did not recover the connection.
+
+Implementations SHOULD support the auto-refresh flow. Without it, sessions that rotate CSRF every few minutes (the common case for production-grade `Provider`s) become unusable; the spec keeps it `SHOULD` rather than `MUST` because some `Provider`s don't rotate CSRF and the refresh flow is dead code there.
+
+### Storage-state format
+
+The cookie jar follows Playwright's `storage_state.json` format. UACP does not redefine the format; conforming implementations MAY use any JSON-equivalent serialization but the field names MUST match Playwright's: `name`, `value`, `domain`, `path`, `expires` (Unix seconds; `-1` for session cookies), `httpOnly`, `secure`, `sameSite`. The `origins` array (used by Playwright for localStorage / sessionStorage) is permitted in the artifact but `Conforming Implementation`s MAY ignore it for cookie-only auth flows.
+
+### Capture flow
+
+UACP does not specify how the storage state is captured. The intended flow:
+
+1. The operator runs a one-shot helper (typically a short Playwright script driven by the implementation's CLI) that opens a Chromium browser to the `Provider`'s login page.
+2. The operator logs in normally — username/password, 2FA, whatever the `Provider` requires.
+3. On browser close, the helper captures the storage state and writes it (encrypted at rest per §6.3) to the location the artifact's `storage_state_ref` resolves to.
+
+The capture flow is operator-driven and runs outside the dispatch path; it has no normative `v1.x` spec requirements beyond producing a valid `storage_state.json` and writing it to the secret store.
+
 ## 2.9 Conformance summary
 
 This section summarizes the conformance level of each registered `Authentication Method` for a `Conforming Implementation` of `v1.x`. The conformance levels are:
@@ -539,6 +627,7 @@ This section summarizes the conformance level of each registered `Authentication
 | API key (query parameter) | `api_key_query` | **MUST** | §2.4.2 |
 | AWS Signature Version 4 | `aws_sigv4` | SHOULD | §2.5.1 |
 | HMAC signature (generic) | `hmac_signature` | SHOULD | §2.5.2 |
+| Session-cookie replay | `session_cookie` | MAY | §2.10 |
 | Custom authentication | `custom_auth` | MAY | §2.6 |
 
 PKCE for `oauth2_authorization_code` is normative per §2.2.1: a `Conforming Implementation` MUST support PKCE, and PKCE MUST be used for any `oauth2_authorization_code` flow originating from a non-confidential client. The `MUST support` row for `oauth2_authorization_code` therefore implies `MUST support PKCE`.
@@ -553,5 +642,6 @@ The following requirements are normative and apply to every `Conforming Implemen
 - A `Conforming Implementation` **MUST NOT** support OAuth 1.0a `PLAINTEXT` signing per §2.3.
 - A `Conforming Implementation` **MUST NOT** silently substitute a different `Authentication Method` for one it does not support per §2.8.
 - A `Conforming Implementation` **MUST NOT** treat OAuth 2.0 `code_challenge_method=plain` as equivalent to `S256`; the values are distinct, `S256` is required by default, and `plain` is permitted only under the narrow conditions in §2.2.1.
+- A `Conforming Implementation` **MUST NOT** load `.uacp` artifacts using `session_cookie` without `tos_acknowledged: true`. Per §2.10 the field MUST be present and MUST be the literal boolean `true`; absent or any other value rejects with `bad_input`.
 
 The cumulative effect of the MUST and MUST NOT requirements in this document is that a `Conforming Implementation` of `v1.x` can authenticate to OAuth 2.0 authorization-code-with-PKCE providers, OAuth 2.0 client-credentials providers, header-based API-key providers, and query-parameter API-key providers without any optional capability, and SHOULD additionally cover device-code, OAuth 1.0a, AWS SigV4, and generic HMAC providers. This is sufficient to reach the great majority of the long-tail HTTPS services UACP targets; the `MAY` and unregistered surface is reserved for the residual cases that warrant `custom_auth` or future registration.

@@ -54,6 +54,9 @@ UACP's threat model enumerates the attacks the protocol's design defends against
 - **Supply-chain attacks on `.uacp` files.** A malicious or hijacked source distributes `.uacp` artifacts that misdirect dispatch (a crafted `base_url` pointing at an attacker-controlled service that proxies to the real `Provider` while logging credentials), over-claim scopes, or include destructive operations whose effects the user has not anticipated.
   - *Defenses*: (a) Stage 3's schema validation (§3.10) prevents malformed artifacts from loading and prevents embedded credentials from being smuggled. (b) §6.7's trust model for ingested artifacts requires implementations to warn the user when the source's origin is suspicious (an OpenAPI URL that doesn't match the `Provider`'s known canonical domain, an LLM-inferred operation that includes a destructive verb). (c) The mandatory user review for LLM-inferred schemas (§3.8) is the human-in-the-loop check against agent-injected malicious operations.
 
+- **Session-cookie credential theft.** Session-cookie auth (§2.10) bypasses provider authentication once the cookie state is captured. An attacker who steals the storage-state file gains the same access the original browser session held. Revocation requires the user to log out of the browser session that originally captured the state — UACP cannot revoke a session cookie remotely; the `Provider`'s session-management surface is the line of defense. The credential blast radius is the same as a stolen browser cookie.
+  - *Defenses*: (a) Implementations storing `storage_state.json` MUST encrypt at rest per §6.3 with the same rigor as OAuth tokens — the §6.2 `local-keyring` and `vault` stores satisfy this; the `inline-encrypted` store satisfies it via the artifact-borne ciphertext shape. (b) Per §2.10's `tos_acknowledged: true` requirement, the operator's affirmative consent is recorded in the artifact and re-checked at every load. (c) Per §2.10's audit-log requirement, every dispatch through a `session_cookie` connection is logged with `risk: tos_violation_potential`, so post-incident audit can identify which operations ran through which cookies during which time window.
+
 ### Threats explicitly out of scope
 
 The following are recognized threats that are NOT in UACP's scope. Implementers facing them are referred to their host-environment's security controls.
@@ -362,6 +365,17 @@ The defenses:
 - The provenance metadata (§3.8) records the LLM model and the original natural-language description; a future audit can reconstruct what was input and what was approved, even if the malicious inference slipped through.
 
 UACP cannot eliminate prompt-injection-class risks at the protocol layer; the inference pipeline's security is part of the implementation's responsibility. UACP's contribution is the structural requirement that no inferred operation reaches dispatch without human review, and that the review is presented with the information needed to catch obvious problems.
+
+### Session-cookie connections
+
+Session-cookie connections (§2.10) inherit user trust at the moment the storage state is captured. The captured cookies represent the user's authenticated browser session at that point in time; any operation dispatched through the resulting connection effectively impersonates that browser session for the duration of the cookies' validity.
+
+Two trust-posture rules apply:
+
+- Implementations SHOULD warn the user if the captured storage state is older than 30 days at connection-creation time. Provider session timeouts vary widely (Google sessions persist months; some financial-provider sessions rotate hourly); 30 days is a conservative default that catches the most common "stale capture" failure mode where the user re-runs UACP weeks after the original capture and the cookies have silently expired. The warning is informational; it does not block dispatch.
+- Implementations supporting `session_cookie` MUST surface the §2.10 ToS-violation-risk warning at connection-creation time. The exact wording is implementation-defined; the warning MUST mention that replaying browser-captured cookies may violate the `Provider`'s Terms of Service. A docstring or buried log line is insufficient; the warning surfaces through the implementation's primary user-facing channel.
+
+Both rules are independent of the §3.8 user-review machinery — even when the operations were authored by hand (no LLM inference involved), the ToS warning still fires because the operational risk is in the auth method, not the schema source.
 
 ## 6.8 Compliance posture
 

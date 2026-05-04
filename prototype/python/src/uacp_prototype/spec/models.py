@@ -343,6 +343,7 @@ class AuthenticationBlock(StrictModel):
             "api_key_query",
             "aws_sigv4",
             "hmac_signature",
+            "session_cookie",
             "custom_auth",
         }
         if v in registered:
@@ -353,6 +354,27 @@ class AuthenticationBlock(StrictModel):
             f"authentication.method {v!r} is neither in the v1.0 registered set "
             f"nor x-namespaced for in-development extension (per §7.3)"
         )
+
+    @model_validator(mode="after")
+    def _session_cookie_requires_tos_ack(self) -> "AuthenticationBlock":
+        """Per §2.10 + the §2.9 MUST NOT items: session_cookie auth MUST
+        carry tos_acknowledged: true (the literal boolean). Absent or
+        any other value is rejected with bad_input at validation time.
+        The audit hook lives in the artifact: the ack in the artifact
+        is the operator's signature on the ToS-violation-risk
+        evaluation."""
+        if self.method != "session_cookie":
+            return self
+        extra = self.model_extra or {}
+        tos = extra.get("tos_acknowledged")
+        if tos is not True:  # MUST be the literal boolean true
+            raise ValueError(
+                "session_cookie authentication requires tos_acknowledged: true "
+                "(literal boolean). Per §2.10 the operator's affirmative "
+                "acknowledgment of the Terms-of-Service-violation risk MUST be "
+                "present in the artifact; absent or any other value rejects."
+            )
+        return self
 
 
 class EncryptedSecret(StrictModel):

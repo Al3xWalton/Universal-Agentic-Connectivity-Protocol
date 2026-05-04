@@ -356,6 +356,58 @@ def test_unregistered_method_rejected() -> None:
         load_dict(raw)
 
 
+def test_session_cookie_method_registered() -> None:
+    """Stage 8e registered session_cookie in §2.1; loader accepts it
+    when tos_acknowledged: true is present."""
+    raw = _minimal_artifact()
+    raw["authentication"] = {
+        "method": "session_cookie",
+        "tos_acknowledged": True,
+        "storage_state_ref": "secret://local-keyring/sess#state",
+    }
+    art = load_dict(raw)
+    assert art.authentication.method == "session_cookie"
+
+
+def test_session_cookie_without_tos_ack_rejected() -> None:
+    """§2.10 + §2.9 MUST NOT: session_cookie without tos_acknowledged: true
+    is rejected at validation time with bad_input."""
+    raw = _minimal_artifact()
+    raw["authentication"] = {
+        "method": "session_cookie",
+        "storage_state_ref": "secret://local-keyring/sess#state",
+        # tos_acknowledged absent
+    }
+    with pytest.raises(SpecValidationError, match="tos_acknowledged"):
+        load_dict(raw)
+
+
+def test_session_cookie_with_tos_ack_false_rejected() -> None:
+    raw = _minimal_artifact()
+    raw["authentication"] = {
+        "method": "session_cookie",
+        "tos_acknowledged": False,
+        "storage_state_ref": "secret://local-keyring/sess#state",
+    }
+    with pytest.raises(SpecValidationError, match="tos_acknowledged"):
+        load_dict(raw)
+
+
+def test_session_cookie_with_tos_ack_string_true_rejected() -> None:
+    """The §2.10 spec text is explicit: tos_acknowledged MUST be the
+    literal boolean true, not the string "true" or the integer 1.
+    Strict typing prevents the operator from accidentally bypassing
+    the ack via JSON-shape laxity."""
+    raw = _minimal_artifact()
+    raw["authentication"] = {
+        "method": "session_cookie",
+        "tos_acknowledged": "true",  # string, not boolean
+        "storage_state_ref": "secret://local-keyring/sess#state",
+    }
+    with pytest.raises(SpecValidationError, match="tos_acknowledged"):
+        load_dict(raw)
+
+
 def test_x_namespaced_method_accepted() -> None:
     raw = _minimal_artifact()
     raw["authentication"]["method"] = "x-internal-method"
