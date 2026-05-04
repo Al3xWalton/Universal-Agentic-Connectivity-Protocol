@@ -1,0 +1,104 @@
+{
+  "$schema": "https://uacp.spec/v1/schema.json",
+  "name": "google-notebooklm-send-chat",
+  "version": "0.1.0",
+  "description": "Google NotebookLM send-chat-message via the same RPC endpoint the web UI uses. Authenticates via session_cookie per §2.10. Operator MUST evaluate Google's Terms of Service and accept responsibility before enabling.",
+  "authentication": {
+    "method": "session_cookie",
+    "tos_acknowledged": true,
+    "storage_state_ref": "secret://local-keyring/notebooklm-storage-state",
+    "cookie_names": ["SID", "HSID", "SSID", "APISID", "SAPISID", "__Secure-1PSID", "__Secure-3PSID"],
+    "csrf_token": {
+      "header_name": "X-Same-Domain",
+      "cookie_name": "_csrf_token",
+      "refresh_url": "https://notebooklm.google.com/_/NotebookLmRpcs/csrf",
+      "extraction_path": "$.token",
+      "extraction_format": "json"
+    }
+  },
+  "dispatch": {
+    "base_url": "https://notebooklm.google.com",
+    "default_headers": {
+      "Accept": "*/*",
+      "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+      "Origin": "https://notebooklm.google.com",
+      "Referer": "https://notebooklm.google.com/"
+    },
+    "default_timeout_ms": 60000,
+    "default_user_agent": "uacp-prototype/0.1"
+  },
+  "operations": [
+    {
+      "id": "notebooklm_send_chat_message",
+      "summary": "Send a chat message to a NotebookLM notebook.",
+      "description": "POSTs the batchexecute RPC endpoint with rpcids=BfMzVf to send a chat message into the named notebook. Body parameters notebook_id (the target notebook's id, captured from the notebook's URL) and message (the chat text) are encoded into the RPC payload's f.req field. Idempotency: NOT idempotent — re-issuing the same call posts duplicate messages. Per Stage 4 §4.3 the runtime MUST NOT retry automatically. Source: notebooklm-py's chat module, RPC id BfMzVf reverse-engineered.",
+      "tags": ["notebooklm", "chat", "write"],
+      "idempotency": "not_idempotent",
+      "request": {
+        "method": "POST",
+        "path": "/_/NotebookLmRpcs/data/batchexecute",
+        "query_parameters": {
+          "type": "object",
+          "required": ["rpcids"],
+          "properties": {
+            "rpcids": {
+              "type": "string",
+              "const": "BfMzVf",
+              "default": "BfMzVf",
+              "description": "RPC method id for send-chat-message. Reverse-engineered from notebooklm-py."
+            }
+          }
+        },
+        "body": {
+          "media_type": "application/x-www-form-urlencoded",
+          "schema": {
+            "type": "object",
+            "required": ["f.req", "at"],
+            "properties": {
+              "f.req": {
+                "type": "string",
+                "description": "URL-encoded RPC payload. Carries the notebook_id and the message text in the structure NotebookLM's batchexecute expects: [[[\"BfMzVf\", JSON-stringified [notebook_id, [[message, null, null]], 1, null], null, \"generic\"]]] URL-encoded."
+              },
+              "at": {
+                "type": "string",
+                "description": "CSRF token; same posture as list-notebooks."
+              }
+            }
+          }
+        }
+      },
+      "response": {
+        "200": {
+          "description": "Chat completion. Body is text-format Google RPC payload carrying the assistant's reply.",
+          "body": {
+            "media_type": "application/json+protobuf",
+            "format": "text"
+          }
+        },
+        "401": {
+          "description": "Session expired or CSRF stale; §2.10 auto-refresh applies.",
+          "body": {"media_type": "text/html", "format": "text"}
+        },
+        "403": {
+          "description": "ToS-related rejection or session lacks access.",
+          "body": {"media_type": "text/html", "format": "text"}
+        },
+        "404": {
+          "description": "Notebook not found (invalid notebook_id).",
+          "body": {"media_type": "text/html", "format": "text"}
+        },
+        "default": {
+          "description": "Unexpected response.",
+          "body": {"media_type": "text/html", "format": "text"}
+        }
+      },
+      "source": {
+        "type": "inferred",
+        "model": "anthropic/claude-haiku-4.5",
+        "description": "I want to connect to Google NotebookLM. It's a research/notebook tool. The two operations I need are: list my notebooks (no parameters), and send a chat message to a specific notebook (parameters: notebook_id, message). The reference implementation is github.com/teng-lin/notebooklm-py — its src/notebooklm/ modules document the RPC ids and the cookie + CSRF dance.",
+        "confidence": "medium",
+        "reviewed_at": "2026-05-04T06:00:00Z"
+      }
+    }
+  ]
+}

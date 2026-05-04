@@ -167,6 +167,44 @@ The five tests are read-only and non-destructive: get_repo_success (fetches a re
 
 The default `UACP_GITHUB_TEST_USER=octocat` works for everyone — Octocat is GitHub's mascot account with many public repos suitable for exercising pagination.
 
+### NotebookLM (session_cookie) integration tests
+
+The integration tests under `tests/providers/test_notebooklm.py` exercise `session_cookie` auth (§2.10) against Google NotebookLM via the same `batchexecute` RPC endpoint the web UI uses. **Read §2.10 of the spec carefully before running these.** NotebookLM has no public API; the connection replays browser session cookies, which is a grey-zone practice that may violate Google's Terms of Service. The artifact requires `tos_acknowledged: true` (literal boolean) at the spec-loader level, and every dispatch emits an `audit-log INFO risk=tos_violation_potential` event per §6.6.
+
+Setup is unique to `session_cookie`:
+
+1. **Install Playwright** in the prototype environment so a browser is available for capture:
+   ```bash
+   uv run pip install playwright
+   uv run playwright install chromium
+   ```
+
+2. **Capture browser session state.** The `uacp capture-storage-state` CLI subcommand is a **stub** in v1.0; it prints the manual capture recipe rather than running an interactive Playwright session. Run the stub to see the recipe:
+   ```bash
+   uv run python -m uacp_prototype.cli capture-storage-state \
+       --provider notebooklm \
+       --output ~/.uacp/storage/notebooklm.json
+   ```
+   Or run the equivalent Playwright snippet directly: launch a headed Chromium, navigate to `https://notebooklm.google.com/`, sign in with your Google account, confirm at least one notebook is visible, then call `context.storage_state(path=...)` to write the cookies + origins to disk. Set the file to mode `0600` afterwards — captured state is a credential.
+
+3. **Populate `prototype/python/.env`** with:
+   ```
+   UACP_NOTEBOOKLM_STORAGE_STATE=$HOME/.uacp/storage/notebooklm.json
+   UACP_NOTEBOOKLM_TEST_NOTEBOOK_ID=<an id you have access to>
+   UACP_NOTEBOOKLM_TEST_MESSAGE="hello from uacp integration"
+   ```
+
+4. **Run the integration tests**:
+   ```bash
+   uv run pytest tests/providers/test_notebooklm.py -m integration
+   ```
+
+The five tests are: `list_notebooks_success` (authenticated batchexecute call returns 200 and decodes as text); `list_notebooks_after_csrf_refresh` (mutates the captured `_csrf_token` cookie to a known-stale value, asserts the §2.10 refresh-and-retry path acquires a fresh token and the retry succeeds); `send_chat_message_success` (POST a chat message into a notebook); `send_chat_message_with_invalid_notebook` (graceful failure shape — accepts either a `DispatchError` or a `DispatchSuccess` carrying the RPC error envelope, since the artifact doesn't declare a `failure_predicate`); `refusal_when_storage_state_missing` (asserts `SessionCookieAuthError` when the credential resolver returns no `storage_state`).
+
+Captured storage state is sensitive — treat it like a password. Per §6.7, recapture every **30 days** at minimum (Google rotates session cookies). Never commit captured state to git, never share it across machines, and add the storage path to your local `.gitignore` if it lands inside a working tree.
+
+The two `.uacp` artifacts at `examples/notebooklm/` are produced through the §3.8 LLM-inference path (`source.type: inferred`, `source.model: anthropic/claude-haiku-4.5`, `source.reviewed_at` populated) — the operator described the integration in natural language, the LLM proposed an operation shape, the operator reviewed and confirmed it via `connections.ingest_nl.confirm_and_persist(approved=True)`. The `tests/unit/test_end_to_end_notebooklm_mock.py` suite demonstrates the full inference → review → confirm → load → dispatch loop with a recorded LLM response.
+
 ## Spec correspondence
 
 Every module's docstring names the spec sections it implements. Module-level test files under `tests/unit/` exercise the spec's MUSTs at the unit level. The end-to-end mock test under `tests/unit/test_end_to_end_mock.py` ties the layers together.

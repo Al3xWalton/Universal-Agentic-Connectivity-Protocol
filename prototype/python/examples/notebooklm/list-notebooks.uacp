@@ -1,0 +1,113 @@
+{
+  "$schema": "https://uacp.spec/v1/schema.json",
+  "name": "google-notebooklm-list-notebooks",
+  "version": "0.1.0",
+  "description": "Google NotebookLM list-notebooks via the same RPC endpoint the web UI uses. NotebookLM has no public API; this artifact replays the user's browser session cookies. Authenticates via session_cookie per §2.10 — operator MUST evaluate Google's Terms of Service and accept responsibility before enabling. Reference implementation pattern: github.com/teng-lin/notebooklm-py.",
+  "authentication": {
+    "method": "session_cookie",
+    "tos_acknowledged": true,
+    "storage_state_ref": "secret://local-keyring/notebooklm-storage-state",
+    "cookie_names": ["SID", "HSID", "SSID", "APISID", "SAPISID", "__Secure-1PSID", "__Secure-3PSID"],
+    "csrf_token": {
+      "header_name": "X-Same-Domain",
+      "cookie_name": "_csrf_token",
+      "refresh_url": "https://notebooklm.google.com/_/NotebookLmRpcs/csrf",
+      "extraction_path": "$.token",
+      "extraction_format": "json"
+    }
+  },
+  "dispatch": {
+    "base_url": "https://notebooklm.google.com",
+    "default_headers": {
+      "Accept": "*/*",
+      "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+      "Origin": "https://notebooklm.google.com",
+      "Referer": "https://notebooklm.google.com/"
+    },
+    "default_timeout_ms": 30000,
+    "default_user_agent": "uacp-prototype/0.1"
+  },
+  "operations": [
+    {
+      "id": "notebooklm_list_notebooks",
+      "summary": "List the user's NotebookLM notebooks.",
+      "description": "POSTs the batchexecute RPC endpoint with rpcids=wXbhsf to fetch the list of notebooks the authenticated user has access to. The exact rpcids string is reverse-engineered from notebooklm-py and may need adjustment if Google rotates the RPC namespace; consult the upstream library when this stops working. Returns the RPC's text response (Google's batchexecute format wraps the JSON payload in a sentinel-prefixed string that the agent's response parser strips).",
+      "tags": ["notebooklm", "read"],
+      "idempotency": "idempotent",
+      "request": {
+        "method": "POST",
+        "path": "/_/NotebookLmRpcs/data/batchexecute",
+        "query_parameters": {
+          "type": "object",
+          "required": ["rpcids"],
+          "properties": {
+            "rpcids": {
+              "type": "string",
+              "const": "wXbhsf",
+              "default": "wXbhsf",
+              "description": "RPC method id for list-notebooks. Reverse-engineered from notebooklm-py; verify against current upstream when integrating."
+            },
+            "f.sid": {
+              "type": "string",
+              "description": "Optional session id; populated by Google's web UI but not strictly required for replay."
+            }
+          }
+        },
+        "body": {
+          "media_type": "application/x-www-form-urlencoded",
+          "schema": {
+            "type": "object",
+            "required": ["f.req", "at"],
+            "properties": {
+              "f.req": {
+                "type": "string",
+                "description": "URL-encoded RPC payload. For list-notebooks the typical payload is [[[\"wXbhsf\",\"[null,1]\",null,\"generic\"]]] URL-encoded."
+              },
+              "at": {
+                "type": "string",
+                "description": "CSRF token. Sourced from the same _csrf_token cookie the authentication block references, but encoded as a form field on the request body per Google's batchexecute convention."
+              }
+            }
+          }
+        }
+      },
+      "response": {
+        "200": {
+          "description": "Batch execute RPC response. Body is text-format Google RPC payload that strips a 4-character sentinel prefix and decodes as JSON.",
+          "body": {
+            "media_type": "application/json+protobuf",
+            "format": "text"
+          }
+        },
+        "401": {
+          "description": "Session expired or CSRF token stale. The dispatcher's §2.10 auto-refresh path attempts CSRF re-acquisition before retrying.",
+          "body": {
+            "media_type": "text/html",
+            "format": "text"
+          }
+        },
+        "403": {
+          "description": "ToS-related rejection or session lacks access. Same auto-refresh path applies.",
+          "body": {
+            "media_type": "text/html",
+            "format": "text"
+          }
+        },
+        "default": {
+          "description": "Unexpected response.",
+          "body": {
+            "media_type": "text/html",
+            "format": "text"
+          }
+        }
+      },
+      "source": {
+        "type": "inferred",
+        "model": "anthropic/claude-haiku-4.5",
+        "description": "I want to connect to Google NotebookLM. It's a research/notebook tool. The two operations I need are: list my notebooks (no parameters), and send a chat message to a specific notebook (parameters: notebook_id, message). The reference implementation is github.com/teng-lin/notebooklm-py — its src/notebooklm/ modules document the RPC ids and the cookie + CSRF dance.",
+        "confidence": "medium",
+        "reviewed_at": "2026-05-04T06:00:00Z"
+      }
+    }
+  ]
+}

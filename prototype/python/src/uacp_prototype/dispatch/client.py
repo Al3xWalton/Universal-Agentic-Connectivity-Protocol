@@ -348,6 +348,12 @@ class DispatchClient:
         # _check_failure_predicate can route the response through the
         # operation's declared format / failure_predicate.
         self._current_operation = op
+        # Reset per-dispatch CSRF-refresh tracking (§2.10): only one
+        # CSRF refresh-and-retry per dispatch call.
+        self._csrf_refreshed_this_call = False
+        # Per §2.10 audit emit: every dispatch through a session_cookie
+        # connection logs at INFO with risk: tos_violation_potential.
+        self._emit_session_cookie_audit_event(op)
         cfg = self.artifact.dispatch
         url = _build_url(cfg.base_url, op.request, params=path_params, query=query)
         _https_only(url)
@@ -375,29 +381,52 @@ class DispatchClient:
                 headers.setdefault("Content-Type", "application/json")
                 headers["Content-Length"] = str(len(request_body))
 
-        # Apply auth (§4.1 step 7): the auth subsystem applies LAST and may
-        # add headers / query. We construct an httpx.Request only to hand
-        # to the AuthMethod for inspection; we then merge.
+        # Apply auth (§4.1 step 7). Extracted so the §2.10 CSRF refresh
+        # path can re-apply auth after refreshing the CSRF token.
+        url, headers = self._apply_auth(op, url, headers, request_body)
+
+        # Now the retry envelope.
+        return self._with_retry(op, url, headers, request_body)
+
+    def _apply_auth(
+        self,
+        op: Operation,
+        url: str,
+        headers: dict[str, str],
+        body: bytes | None,
+    ) -> tuple[str, dict[str, str]]:
+        """Re-apply the AuthMethod's apply() to the in-flight request.
+
+        Returns a new (url, headers) tuple. Used both for the initial
+        dispatch and after a §2.10 CSRF refresh, when the runtime CSRF
+        state has changed and the headers dict needs the freshly-derived
+        CSRF header value rather than the stale one.
+        """
         auth_input_request = httpx.Request(
-            op.request.method, url, headers=headers, content=request_body
+            op.request.method, url, headers=headers, content=body
         )
-        credentials = self.credential_resolver()
+        credentials = dict(self.credential_resolver() or {})
+        # Inject runtime CSRF state (set by _session_cookie_csrf_refresh_attempt
+        # on a prior iteration of this loop) so the AuthMethod's apply()
+        # sees the refreshed token instead of the stale cookie-derived one.
+        csrf_state = getattr(self, "_csrf_state", None)
+        if csrf_state is not None:
+            credentials.setdefault("csrf_state", csrf_state)
         auth_result = self.auth_method.apply(auth_input_request, credentials=credentials)
+        new_headers = dict(headers)
         for hk, hv in auth_result.headers.items():
-            headers[hk] = hv
+            new_headers[hk] = hv
+        new_url = url
         if auth_result.query:
-            # rebuild URL with merged query
             parsed = urlparse(url)
             from urllib.parse import parse_qsl
 
             existing = dict(parse_qsl(parsed.query))
             existing.update(auth_result.query)
-            url = urlunparse(
+            new_url = urlunparse(
                 parsed._replace(query=urlencode(existing, doseq=True))
             )
-
-        # Now the retry envelope.
-        return self._with_retry(op, url, headers, request_body)
+        return new_url, new_headers
 
     def _with_retry(
         self,
@@ -528,7 +557,17 @@ class DispatchClient:
                     continue
                 return err
 
-            # 4xx (other than 429) — surface immediately (§4.3)
+            # 4xx (other than 429) — try session_cookie CSRF refresh
+            # per §2.10 if applicable, otherwise surface immediately.
+            if response.status_code in (401, 403, 419):
+                refreshed = self._session_cookie_csrf_refresh_attempt(op, response)
+                if refreshed:
+                    # Re-apply auth so the refreshed CSRF state lands in
+                    # the request's CSRF header (the previous header value
+                    # was derived from the old cookie token).
+                    url, headers = self._apply_auth(op, url, headers, body)
+                    last_error = None
+                    continue
             return self._build_error(op, response)
 
     # ------------------------------------------------------------------
@@ -654,6 +693,93 @@ class DispatchClient:
         ``_current_operation``.
         """
         return getattr(self, "_current_operation", None)
+
+    def _session_cookie_csrf_refresh_attempt(
+        self, op: Operation, response: httpx.Response
+    ) -> bool:
+        """Per §2.10 CSRF refresh on 401/403/419.
+
+        When the artifact's authentication method is session_cookie and
+        a csrf_token.refresh_url is configured, fetch the refresh URL
+        with the current cookies, extract a fresh CSRF token via the
+        configured extraction path, store it in the client's
+        ``_csrf_state`` so the next dispatch call's credential resolver
+        sees it, and return True. Returns False when the auth method
+        isn't session_cookie, when no refresh is configured, when the
+        refresh has already fired once for this dispatch (one-retry
+        cap per the spec's "retry once" rule), or when the refresh
+        fails for any reason.
+        """
+        if getattr(self.auth_method, "method", "") != "session_cookie":
+            return False
+        if getattr(self, "_csrf_refreshed_this_call", False):
+            return False  # already refreshed once; don't loop
+        # Pull the artifact's authentication block to find csrf_token config
+        auth = self.artifact.authentication
+        extra = auth.model_extra or {}
+        csrf_block = extra.get("csrf_token")
+        if not isinstance(csrf_block, dict):
+            return False
+        refresh_url = csrf_block.get("refresh_url")
+        extraction_path = csrf_block.get("extraction_path")
+        if not refresh_url or not extraction_path:
+            return False
+        extraction_format = csrf_block.get("extraction_format", "json")
+
+        try:
+            from ..auth.session_cookie import (
+                CSRFState,
+                SessionCookieAuthError,
+                parse_storage_state,
+                refresh_csrf,
+            )
+
+            credentials = self.credential_resolver()
+            raw_state = credentials.get("storage_state")
+            if raw_state is None:
+                return False
+            storage = (
+                raw_state if hasattr(raw_state, "cookies")
+                else parse_storage_state(raw_state)
+            )
+            new_token = refresh_csrf(
+                refresh_url,
+                storage_state=storage,
+                extraction_path=extraction_path,
+                extraction_format=extraction_format,
+                http_client=self._client,
+            )
+            self._csrf_state = CSRFState(token=new_token)
+            self._csrf_refreshed_this_call = True
+            log.info(
+                "session_cookie CSRF refreshed for op=%s (status=%d) — retrying once",
+                op.id,
+                response.status_code,
+            )
+            return True
+        except SessionCookieAuthError as e:
+            log.warning("session_cookie CSRF refresh failed: %s", e)
+            return False
+        except Exception as e:  # pragma: no cover — defensive
+            log.warning("session_cookie CSRF refresh unexpected error: %s", e)
+            return False
+
+    def _emit_session_cookie_audit_event(self, op: Operation) -> None:
+        """Per §2.10 SHOULD: emit an INFO-level audit event for every
+        dispatch through a session_cookie connection, carrying
+        risk: tos_violation_potential per §6.6 audit field convention.
+
+        The prototype emits via stdlib logging on a dedicated audit
+        logger so production deployments can route it independently.
+        """
+        if getattr(self.auth_method, "method", "") != "session_cookie":
+            return
+        # Use a structured-log-friendly format. Production deployments
+        # will route this through their audit log pipeline.
+        log.info(
+            "session_cookie dispatch: op=%s risk=tos_violation_potential",
+            op.id,
+        )
 
     def _check_failure_predicate(
         self, op: Operation, response: httpx.Response

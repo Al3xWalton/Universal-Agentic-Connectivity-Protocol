@@ -11,6 +11,12 @@
     named operation against the configured connection. Requires a
     Connection in `active` state with credentials in the local
     keyring; prints the canonical error / success result.
+  - `uacp capture-storage-state --provider <name> --output FILE` —
+    interactive Playwright login that captures browser session
+    cookies for `session_cookie` connections. STUB in v1.0 — emits
+    instructions and exits 1; integration tests can be run by
+    capturing storage state manually with the Playwright `codegen`
+    command described in the README.
 """
 
 from __future__ import annotations
@@ -102,6 +108,38 @@ def _cmd_dispatch(args: argparse.Namespace) -> int:
     return 1
 
 
+def _cmd_capture_storage_state(args: argparse.Namespace) -> int:
+    """Stubbed for v1.0 — operators capture storage state with a
+    one-shot Playwright session per the README. The CLI emits the
+    instructions verbatim so they're discoverable from `uacp --help`.
+
+    Stage 9+ replaces this stub with an interactive Playwright launch
+    that opens a Chromium window, waits for the operator to complete
+    sign-in, then writes ``page.context.storage_state(path=...)``.
+    """
+    output = args.output or "~/.uacp/storage/<provider>.json"
+    msg = (
+        "uacp capture-storage-state: STUB in v1.0.\n\n"
+        f"Capture storage state for provider '{args.provider}' manually:\n\n"
+        "  1. uv run playwright install chromium\n"
+        "  2. uv run python -c \"from playwright.sync_api import sync_playwright;\\\n"
+        "       p = sync_playwright().start();\\\n"
+        "       browser = p.chromium.launch(headless=False);\\\n"
+        "       context = browser.new_context();\\\n"
+        "       page = context.new_page();\\\n"
+        f"       page.goto('https://notebooklm.google.com/');\\\n"
+        "       input('Sign in, then press Enter to capture...');\\\n"
+        f"       context.storage_state(path='{output}');\\\n"
+        "       browser.close()\"\n"
+        f"  3. chmod 600 {output}\n\n"
+        "Per §2.10, the captured state is sensitive — store it with\n"
+        "filesystem 0600 permissions, never commit it to git, and\n"
+        "rotate it (recapture) every 30 days at minimum.\n"
+    )
+    print(msg, file=sys.stderr)
+    return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="uacp", description="UACP reference CLI")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -131,6 +169,21 @@ def main(argv: list[str] | None = None) -> int:
     p_dispatch.add_argument("operation_id", help="operation id to dispatch")
     p_dispatch.add_argument("--params", help="JSON string of params")
     p_dispatch.set_defaults(func=_cmd_dispatch)
+
+    p_capture = sub.add_parser(
+        "capture-storage-state",
+        help="(STUB) Capture browser session cookies for session_cookie connections",
+    )
+    p_capture.add_argument(
+        "--provider",
+        required=True,
+        help="provider id (e.g. notebooklm)",
+    )
+    p_capture.add_argument(
+        "--output",
+        help="path to write storage_state.json",
+    )
+    p_capture.set_defaults(func=_cmd_capture_storage_state)
 
     args = parser.parse_args(argv)
     return int(args.func(args))
