@@ -424,7 +424,7 @@ def _dispatch_raw_url(
         headers.setdefault("User-Agent", client.artifact.dispatch.default_user_agent)
     headers.update(extra_headers)
     headers.update(auth_result.headers)
-    response = client._client.request(  # noqa: SLF001 — internal access scoped to this module
+    response = client.transport.request(
         op.request.method, url, headers=headers
     )
     if 200 <= response.status_code < 300:

@@ -38,6 +38,7 @@ from .envelope import (
     extract_failure_details,
     select_response_entry,
 )
+from .transport import HttpxTransport, Transport
 
 log = logging.getLogger("uacp.dispatch")
 
@@ -245,6 +246,25 @@ def _https_only(url: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+class _TransportGetAdapter:
+    """Adapter exposing ``.get(url, headers=...)`` over a Transport.
+
+    Auth helpers (e.g. ``auth.session_cookie.refresh_csrf``) accept an
+    ``http_client`` whose ``.get()`` shape mirrors ``httpx.Client.get``.
+    Rather than expose the dispatch client's internal transport
+    object directly, this adapter routes the auth helpers' GETs
+    through the transport so that stealth-backed connections also use
+    the stealth transport for CSRF refreshes — keeping the §4.10
+    posture coherent across the dispatch + refresh paths.
+    """
+
+    def __init__(self, transport: Transport) -> None:
+        self._transport = transport
+
+    def get(self, url: str, *, headers: dict[str, str] | None = None) -> httpx.Response:
+        return self._transport.request("GET", url, headers=headers)
+
+
 @dataclass
 class _RateLimitState:
     """Per-Connection rate-limit state per §4.5 cross-operation pooling."""
@@ -263,8 +283,16 @@ class DispatchClient:
     for OAuth methods. Stage 6 owns the secret-store resolution; the
     client just consumes the resolved credentials.
 
-    `httpx_client` is injectable for testing; production callers can
-    omit it and the client constructs its own.
+    Per §4.10 (added in v1.1) the underlying HTTP transport is
+    pluggable. ``transport`` defaults to ``HttpxTransport`` (the v1.0
+    behavior); callers MAY pass a different ``Transport`` (e.g.,
+    ``ScraplingTransport`` for session_cookie connections that need
+    anti-bot resilience) provided the substitute backend preserves
+    the §4.1 — §4.9 contract.
+
+    ``httpx_client`` is retained as a back-compat alias for tests that
+    inject an ``httpx.Client`` directly; new callers SHOULD use
+    ``transport=HttpxTransport(client=...)`` instead.
     """
 
     def __init__(
@@ -273,6 +301,7 @@ class DispatchClient:
         *,
         auth_method: AuthMethod,
         credential_resolver: Callable[[], dict[str, Any]],
+        transport: Transport | None = None,
         httpx_client: httpx.Client | None = None,
         rng: random.Random | None = None,
         sleep: Callable[[float], None] = time.sleep,
@@ -280,20 +309,34 @@ class DispatchClient:
         self.artifact = artifact
         self.auth_method = auth_method
         self.credential_resolver = credential_resolver
-        self._owned_client = httpx_client is None
-        self._client = httpx_client or httpx.Client(
-            timeout=artifact.dispatch.default_timeout_ms / 1000.0,
-            follow_redirects=False,  # we handle redirects per §4.2
-        )
+        if transport is not None and httpx_client is not None:
+            raise ValueError(
+                "DispatchClient: pass either `transport` or `httpx_client`, not both"
+            )
+        if transport is None:
+            transport = HttpxTransport(
+                client=httpx_client,
+                timeout=(
+                    artifact.dispatch.default_timeout_ms / 1000.0
+                    if httpx_client is None
+                    else None
+                ),
+            )
+        self._transport = transport
         self._rng = rng or random.Random()
         self._sleep = sleep
         self._rate_state = _RateLimitState()
 
         self._operations_by_id = {op.id: op for op in artifact.operations}
 
+    @property
+    def transport(self) -> Transport:
+        """The active transport backend. Useful for tests + the §6.6
+        audit-event ``transport`` field hint per §4.10."""
+        return self._transport
+
     def close(self) -> None:
-        if self._owned_client:
-            self._client.close()
+        self._transport.close()
 
     def __enter__(self) -> "DispatchClient":
         return self
@@ -589,7 +632,7 @@ class DispatchClient:
         current_headers = dict(headers)
         current_body = body
         for _ in range(MAX_REDIRECTS + 1):
-            response = self._client.request(
+            response = self._transport.request(
                 current_method,
                 current_url,
                 headers=current_headers,
@@ -747,7 +790,7 @@ class DispatchClient:
                 storage_state=storage,
                 extraction_path=extraction_path,
                 extraction_format=extraction_format,
-                http_client=self._client,
+                http_client=_TransportGetAdapter(self._transport),
             )
             self._csrf_state = CSRFState(token=new_token)
             self._csrf_refreshed_this_call = True
