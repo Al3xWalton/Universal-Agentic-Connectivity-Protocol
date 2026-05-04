@@ -888,3 +888,60 @@ Push the three prototype commits + this memory commit to `origin/main`. No tag �
 ### UACP commit plan
 
 3 prototype commits already landed. Single memory commit — `memory: UACP Stage 11.2 — operation synthesis from captures`. **No tag.** Operator pushes manually.
+
+---
+
+## 2026-05-04 — UACP public-release polish — docs
+
+Documentation-only polish of the first-impression surface. Five docs commits + this memory commit on top of `ff5ec73`. No tag — polish is documentation-only against the frozen v1.1.0 spec.
+
+### Commits
+
+- `d2b7857 docs: rewrite README for public release` — recast README.md as a first-impression-quality landing page (1187 words; was 558). Hero block with shields.io badges (License Apache 2.0, Spec v1.1.0, Tests 596 passing, Status Stable — all static so no CI-status lies); "Why UACP" framing of the universal-by-design bet vs curated catalogs; specification-at-a-glance summary (10 auth methods + 4 schema sources + 4 pagination patterns + lifecycle + security + MCP composition + pluggable transports); abridged real `.uacp` example using the Gmail send file; reference-implementation paragraph (596 unit tests, 5 validated providers, MCP server, browser capture); MCP composability section; eight-stage table; Status block; License + governance paragraph.
+- `4de9cc0 docs: polish SPEC, GOVERNANCE, CONTRIBUTING, CODE_OF_CONDUCT` — SPEC.md gains a Conformance levels intro at the top covering the BCP 14 RFC 2119+8174 interpretation rule; GOVERNANCE.md gains a "How to influence v1.x evolution" section listing the kinds of additions that are welcome (auth methods, pagination patterns, secret stores, transport backends, editorial fixes); CONTRIBUTING.md adds the commit-message convention block and a "What makes a good PR description" sentence, and updates the stale "Stage 7 itself is pending" line; CODE_OF_CONDUCT.md sharpens the enforcement-contact TBD into a clearer operator-action placeholder.
+- `76bf2ad docs: add SECURITY.md` — responsible-disclosure policy (609 words). Reporting channel (TBD operator-fillable contact email); in-scope (v1.x specification + Python reference prototype + repo configuration); out-of-scope (third-party implementations + underlying providers + operator misconfigurations beyond docs defects); supported versions (v1.1.x and v1.0.x receiving security updates); severity-scaled disclosure timeline (30 / 60 / 90 days); acknowledgement language.
+- `566328d docs: add CITATION.cff` — Citation File Format 1.2.0 entry (164 words) pinned at v1.1.0 (released 2026-05-05) with Apache-2.0 license, Al3xWalton GitHub URL, the keyword set the brief specified, and a brief abstract describing UACP's MCP relationship + specification surface.
+- `94efd0d docs: add architectural diagrams under docs/diagrams/` — four mermaid diagrams + directory README. (1) layered architecture: Authentication / Schema / Dispatch on top, Lifecycle alongside, Security cross-cutting all four. (2) schema source convergence: OpenAPI / curl / LLM inference / session capture all converging on the canonical operation form with the user-review gate visible. (3) MCP composition sequence: agent → MCP → UACP → external Provider with all UACP runtime steps visible. (4) capture pipeline: browser session → recorder → encrypted storage → analyzer → LLM synthesis → user review → persist + validate.
+
+### Hard rules honored
+
+- Did not change spec content (the eight stage docs remain immutable; only `docs/diagrams/` is added under `docs/`).
+- Did not change prototype code (polish is documentation-only).
+- Did not fabricate contact details (CODE_OF_CONDUCT and SECURITY contact emails are clear TBD placeholders).
+- Did not add CI badges (the README's "Tests: 596 passing" badge is static, not pointing at a non-existent CI).
+- Did not push the repo or any tag.
+- All internal markdown links in the 11 polished/new files verified — every relative reference resolves. The pre-existing broken link `docs/00-primer.md → 08-conformance.md` was discovered but is OUT OF SCOPE per the spec-immutability rule (flag as future fix(spec) candidate).
+
+### Word counts
+
+| File | Was | Now |
+|---|---|---|
+| README.md | 558 | 1187 |
+| SECURITY.md | — | 609 |
+| CITATION.cff | — | 164 |
+| docs/diagrams/01-layered-architecture.md | — | 227 |
+| docs/diagrams/02-schema-source-convergence.md | — | 219 |
+| docs/diagrams/03-mcp-composition.md | — | 238 |
+| docs/diagrams/04-capture-pipeline.md | — | 276 |
+| docs/diagrams/README.md | — | 145 |
+| SPEC.md | 996 | 1008 |
+| GOVERNANCE.md | 477 | 685 |
+| CONTRIBUTING.md | 685 | 825 |
+| CODE_OF_CONDUCT.md | 706 | 736 |
+
+### Operator action items
+
+1. Push the five docs commits + this memory commit to `origin/main` (on top of `ff5ec73`).
+2. Push v1.0.0 + v1.1.0 tags (`git push origin v1.0.0 v1.1.0`) if not already pushed.
+3. Make the GitHub repo public via Settings → Danger Zone (the canonical `$schema` URL doesn't resolve until then).
+4. Set the repo About description: "A universal protocol for AI agents to authenticate to and dispatch operations against any HTTPS service. Peer to MCP."
+5. Set the repo topics: `protocol`, `ai-agents`, `mcp`, `oauth`, `api`, `connectivity`, `agents`, `automation`.
+6. Create GitHub releases for v1.0.0 + v1.1.0 by pasting the contents of `RELEASE-v1.0.0.md` + `RELEASE-v1.1.0.md`.
+7. Optionally enable GitHub Pages and set the repo's website URL.
+8. Replace the SECURITY.md security-contact TBD with a real address.
+9. Replace the CODE_OF_CONDUCT.md enforcement-contact TBD with a real address.
+10. Optionally file a `fix(spec): Stage 0 — drop dangling reference to 08-conformance.md` PR to close the pre-existing broken link surfaced during this session's link verification.
+
+### UACP commit plan
+
+Five docs commits already landed. Single memory commit — `memory: UACP public-release polish session`. **No tag.** Operator pushes manually.
