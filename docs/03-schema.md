@@ -379,6 +379,18 @@ The `Provider` follows RFC 8288 [[RFC8288](https://datatracker.ietf.org/doc/html
 
 The pattern carries no additional fields. The dispatch runtime MUST follow the `rel="next"` link until the header omits a `next` relation. The response's `headers` schema (§3.3) SHOULD declare the `Link` header so that the response shape is grounded in the artifact rather than ad-hoc.
 
+**RFC 8288 conformance rules.** A `Conforming Implementation` parsing the `Link` header for `link_header` pagination MUST:
+
+- **Match `rel="next"` case-insensitively per RFC 8288 §3.3.** A response carrying `rel="NEXT"` or `rel="Next"` is equivalent to `rel="next"`. Implementations that lowercase the rel value on parse handle this naturally.
+- **Accept space-separated multiple relation types per RFC 8288 §3.3.** A single Link entry MAY declare `rel="next prev"`; the URI applies to both relations. The dispatcher reads the `next` relation when both are declared on the same entry.
+- **Concatenate multiple `Link` header lines per HTTP field semantics.** When the same field name appears multiple times in the response, the dispatcher MUST treat them as a single comma-separated value before parsing. (Most HTTP libraries normalize this automatically; the spec rule covers libraries that surface multiple Link headers as a list.)
+- **Resolve relative-reference URIs per RFC 8288 §3.4.** A Link header MAY contain a relative URI; the dispatcher resolves it against the URL of the request that produced the response. Absolute URIs pass through unchanged. After the first `link_header`-driven advance, subsequent relative URIs resolve against the most-recent request URL, not the original `dispatch.base_url`.
+- **Tolerate link parameters beyond `rel`.** RFC 8288 §3.4 permits parameters like `title`, `type`, `hreflang`. The dispatcher reads only `rel` for pagination purposes; other parameters are ignored. The dispatcher MUST NOT reject a Link entry that carries additional parameters.
+- **Tolerate quoted and unquoted parameter values.** RFC 8288 permits `rel=next` and `rel="next"`. The dispatcher accepts both.
+- **Treat commas inside angle-bracketed URIs as part of the URI**, not as entry separators. RFC 8288 §3 wraps URIs in `<...>` precisely to disambiguate; the dispatcher's entry-splitting logic respects the brackets. Commas inside double-quoted parameter values are similarly part of the value.
+
+The cross-origin termination rule from §4.4 still applies: when the resolved `rel="next"` URI's origin differs from the artifact's `dispatch.base_url` origin, the dispatcher SHOULD end the loop with a warning rather than continue with stripped authentication. This is the runtime safety property; the spec rules above govern parsing correctness regardless of origin.
+
 ### `none`
 
 The operation does not paginate. Equivalent to omitting the `pagination` object.
