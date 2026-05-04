@@ -337,3 +337,46 @@ UACP became self-documenting as a standalone public personal-project repo. Until
 **AVA repo pruned in lockstep** (same date): UACP-only CHANGELOG entries removed; UACP-specific top-of-file `CURRENT.md` summaries replaced with a redirect note pointing at this repo; UACP-only open questions removed. Mixed entries (the Stage 0 + 1 foundational session that created ADR-036 in AVA AND scaffolded the spec repo, and the rename cleanup that touched ADR-036's path references) remain in AVA's CHANGELOG with their UACP-specific detail trimmed and pointed here for the full record. ADR-036 itself stays in AVA — it's the AVA-side architectural decision, not a UACP session record.
 
 **Hard rules honored**: did not change spec content (`docs/00-primer.md` through `docs/07-versioning.md` are immutable); did not change prototype code (`prototype/python/` is immutable); did not push either repo; preserved historical accuracy across migrated entries (dates, verdicts, commit hashes intact).
+
+---
+
+## 2026-05-04 — UACP Stage 8b — Slack OAuth prototype + body-predicate envelope handling
+
+Second per-provider session. Validates UACP against Slack and lands the first `fix(spec):` of the prototype-validation arc — adding `failure_predicate` to §3.3 + §4.6 to handle the 200-with-ok=false envelope shape Slack (and GraphQL-flavored / many enterprise APIs) use.
+
+**Spec repo commit chain on top of `fce9de7` (the migration tip)**:
+
+- `b19526e feat(prototype): implement Slack workspace-scoped OAuth` — `auth/oauth2_workspace.py` as a separate AuthMethod from RFC 6749 vanilla. Handles three Slack divergences: scope= + user_scope= at the authorization endpoint (Slack's user-scope extension; comma-separated values); two tokens in the response (bot xoxb-... at access_token + user xoxp-... at authed_user.access_token, plus team_id / bot_user_id / app_id workspace identity); tokens don't expire by default with optional rotation per Slack 2021. PKCE primitives + OAuth2Error re-used from oauth2_authcode.py; no duplication. Per §7.3 in-development extensions, `.uacp` files use `x-oauth2-workspace` as the method identifier. **23 tests**.
+- `619078b feat(prototype): handle response envelopes ({ok: bool}) at dispatch` — `dispatch/envelope.py` (resolve_jsonpath + evaluate_failure_predicate + extract_failure_details + select_response_entry) plus integration into `dispatch/client.py` at the 2xx branch. `_check_failure_predicate` selects the matching response entry, evaluates the predicate, extracts provider details, maps the provider code to a canonical Principle 8 code via `_map_envelope_failure_code`, and returns a DispatchError preserving the original HTTP status. spec/models.py gains FailurePredicate pydantic model + a failure_predicate field on ResponseEntry with field_validator enforcing the §3.4 JSONPath subset. **25 tests**.
+- `412f7a1 fix(spec): §3.3 + §4.6 — body-predicate failure detection` — additive amendment. §3.3 gains a "Body-predicate failure detection" subsection defining the FailurePredicate shape (path, equals, optional code_path + message_path); §4.6 gains a "Body-predicate evaluation" subsection with a six-step evaluation rule. Predicate is opt-in per response entry; absent predicate retains existing status-only success/failure semantics. Non-breaking per Principle 6 / §7.2 — adding an optional field to ResponseEntry. Pre-amendment v1.x implementations MAY decline silently per §2.8 but SHOULD upgrade.
+- `9146d2c feat(prototype): Slack chat.postMessage + conversations.list .uacp + integration tests` — `examples/slack/chat-postMessage.uacp` (POST /api/chat.postMessage with body-predicate detecting Slack's 200+ok=false envelope; idempotency=not_idempotent per Slack's docs explicit no-retry rule), `examples/slack/conversations-list.uacp` (GET /api/conversations.list with cursor pagination via the deeply-nested `$.response_metadata.next_cursor` JSONPath — exercises §3.4's subset against nesting beyond a top-level field). 5 mock-based end-to-end tests + 5 @pytest.mark.integration tests (deselected by default). README updated with Slack setup section.
+
+**The body-predicate gap, the central spec finding of this session**:
+
+Slack returns HTTP 200 regardless of logical outcome and discriminates via `{ok: true|false}` in the body. §3.3 keyed responses by HTTP status, so a 200 from Slack would always be treated as success. The session brief enumerated three handling paths: (A) spec change adding a `failure_predicate` field; (B) prototype-only Slack workaround; (C) status-code re-mapping at dispatch time. Path A chosen because the change is small (~600 words across §3.3 + §4.6), additive, non-breaking, and exactly what Stage 8 prototype validation is supposed to surface. Path B rejected: a fix this small shouldn't land as undocumented divergence. Path C rejected: lossy (the dispatcher's canonical `status` field MUST stay faithful to wire per §4.6 audit posture).
+
+**Aggregate test count**: **241 unit tests passing**, **10 integration tests deselected** by default, 0 failures, 0 errors. Run wall ~0.39s. Module-by-module:
+
+- test_smoke: 1 (unchanged)
+- test_spec_loader: 35 (unchanged)
+- test_oauth2_authcode: 18 (unchanged)
+- test_dispatch_client: 38 (unchanged)
+- test_pagination: 16 (unchanged)
+- test_lifecycle_state: 26 (unchanged)
+- test_refresh: 11 (unchanged)
+- test_secrets: 23 (unchanged)
+- test_ingest_openapi: 15 (unchanged)
+- test_end_to_end_mock: 5 (unchanged Google)
+- test_oauth2_workspace: 23 (NEW Stage 8b)
+- test_envelope: 25 (NEW Stage 8b)
+- test_end_to_end_slack_mock: 5 (NEW Stage 8b)
+- providers/test_google: 5 (deselected)
+- providers/test_slack: 5 (NEW Stage 8b, deselected)
+
+**Four `.uacp` files validating** through `spec.loader.load()`: gmail-send, google-calendar-list, chat-postMessage, conversations-list — all clean.
+
+**Spec gaps surfaced**: ONE (the body-predicate gap). Closed in this session via path A (additive spec change). No entries to `docs/open-questions.md`.
+
+**Hard rules honored**: did not change Google's existing prototype code (only `spec/models.py` ResponseEntry got a new optional field, and `dispatch/client.py` got the envelope hook in the 2xx branch — those are additive and the 188 Stage 8a tests still pass unchanged); did not relitigate Stage 0-7 spec content beyond the §3.3 + §4.6 amendment which was filed as `fix(spec):`; Slack `.uacp` files validate through the unmodified spec loader (modulo the §3.3 amendment); did not push either repo. Stage 8a's `prototype/python/` work remains intact.
+
+**UACP commit plan**: 4 prototype/spec commits already landed. Single memory commit — `memory: UACP Stage 8b — Slack OAuth prototype + envelope-failure handling`. Operator pushes manually.
