@@ -89,10 +89,10 @@ The UACP specification is composed of the documents under `docs/`, indexed by st
 | 1 | [`01-principles.md`](./01-principles.md) | Complete | Foundational design principles that constrain every later stage. |
 | 2 | [`02-authentication.md`](./02-authentication.md) | Complete | Authentication subsystem: core methods, extension mechanism, credential storage rules. |
 | 3 | [`03-schema.md`](./03-schema.md) | Complete | Schema layer: `.uacp` artifact shape, JSON Schema profile, validation rules. |
-| 4 | `04-dispatch.md` | Pending | Dispatch runtime: invocation surface, parameter binding, transport rules, error normalization. |
-| 5 | `05-lifecycle.md` | Pending | Connection lifecycle: creation, refresh, revocation, observability. |
-| 6 | `06-security.md` | Pending | Security model: secret storage, scope enforcement, threat model. |
-| 7 | `07-versioning.md` | Pending | Versioning policy and the public RFC process for `v2` and beyond. |
+| 4 | [`04-dispatch.md`](./04-dispatch.md) | Complete | Dispatch runtime: invocation surface, parameter binding, transport rules, error normalization. |
+| 5 | [`05-lifecycle.md`](./05-lifecycle.md) | Complete | Connection lifecycle: creation, refresh, revocation, observability. |
+| 6 | [`06-security.md`](./06-security.md) | Complete | Security model: secret storage, scope enforcement, threat model. |
+| 7 | [`07-versioning.md`](./07-versioning.md) | Complete | Versioning policy and the public RFC process for `v2` and beyond. |
 | 8 | `08-conformance.md` | Pending | Conformance test suite definition and the procedure for self-certification. |
 | 9 | `09-prototype.md` | Pending | Reference-implementation guidance and prototype freeze criteria. |
 | 10 | `10-freeze.md` | Pending | `v1.0` freeze rules and the migration path from `v0.x` artifacts. |

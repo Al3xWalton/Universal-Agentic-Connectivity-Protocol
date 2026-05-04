@@ -8,10 +8,10 @@ The canonical UACP specification is composed of the documents under [`docs/`](./
 | 1 | [`docs/01-principles.md`](./docs/01-principles.md) | **Complete** | Foundational design principles that constrain every later stage. |
 | 2 | [`docs/02-authentication.md`](./docs/02-authentication.md) | **Complete** | Authentication subsystem: core methods, extension mechanism, credential storage rules. |
 | 3 | [`docs/03-schema.md`](./docs/03-schema.md) | **Complete** | Schema layer: `.uacp` artifact shape, JSON Schema profile, validation rules. |
-| 4 | `docs/04-dispatch.md` | Pending | Dispatch runtime: invocation surface, parameter binding, transport rules, error normalization. |
-| 5 | `docs/05-lifecycle.md` | Pending | Connection lifecycle: creation, refresh, revocation, observability. |
-| 6 | `docs/06-security.md` | Pending | Security model: secret storage, scope enforcement, threat model. |
-| 7 | `docs/07-versioning.md` | Pending | Versioning policy and the public RFC process for `v2` and beyond. |
+| 4 | [`docs/04-dispatch.md`](./docs/04-dispatch.md) | **Complete** | Dispatch runtime: invocation surface, parameter binding, transport rules, error normalization. |
+| 5 | [`docs/05-lifecycle.md`](./docs/05-lifecycle.md) | **Complete** | Connection lifecycle: creation, refresh, revocation, observability. |
+| 6 | [`docs/06-security.md`](./docs/06-security.md) | **Complete** | Security model: secret storage, scope enforcement, threat model. |
+| 7 | [`docs/07-versioning.md`](./docs/07-versioning.md) | **Complete** | Versioning policy and the public RFC process for `v2` and beyond. |
 | 8 | `docs/08-conformance.md` | Pending | Conformance test suite definition and the procedure for self-certification. |
 | 9 | `docs/09-prototype.md` | Pending | Reference-implementation guidance and prototype freeze criteria. |
 | 10 | — (separate repository) | Pending | Reference implementation lives in the AVA monorepo at `backend/services/connections-broker/`. |
