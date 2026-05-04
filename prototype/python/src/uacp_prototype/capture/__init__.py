@@ -31,6 +31,13 @@ Operation synthesis from captures stays out of scope for Stage 11.1
 is stored cleanly with a stable reference."
 """
 
+from .analyzer import (
+    AnalysisResult,
+    CandidateOperation,
+    ParameterFrequency,
+    PathSegment,
+    analyze_capture,
+)
 from .recorder import (
     BrowserRecorder,
     CaptureArtifact,
@@ -51,16 +58,21 @@ from .storage import (
 )
 
 __all__ = [
+    "AnalysisResult",
     "BrowserRecorder",
+    "CandidateOperation",
     "CaptureArtifact",
     "CaptureError",
     "HarEntry",
+    "ParameterFrequency",
+    "PathSegment",
     "PlaywrightBackend",
     "PlaywrightNotInstalledError",
     "ScraplingBackend",
     "ScraplingCaptureNotInstalledError",
     "SUPPORTED_STORES",
     "StoredCapture",
+    "analyze_capture",
     "capture_id_for",
     "load_capture",
     "recover_in_progress",
