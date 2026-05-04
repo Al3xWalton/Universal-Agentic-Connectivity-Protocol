@@ -1,0 +1,28 @@
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# uv lock and venv
+.venv/
+.uv/
+
+# pytest
+.pytest_cache/
+.coverage
+
+# OS
+.DS_Store
+
+# Local env
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/

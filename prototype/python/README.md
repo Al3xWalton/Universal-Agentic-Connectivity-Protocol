@@ -1,0 +1,85 @@
+# UACP Python Prototype
+
+This is the reference implementation of the [Universal Agentic Connectivity Protocol](../../) (UACP) `v1.x` specification. It is the first conforming implementation: the spec's MUSTs are exercised here, and gaps surface as either spec corrections (committed against the canonical docs) or open questions (logged for Stage 9 prototype freeze).
+
+The prototype is Python 3.12+, managed with [`uv`](https://github.com/astral-sh/uv), and deliberately small. It implements the protocol layer: loading and validating `.uacp` artifacts, OAuth 2.0 authorization-code with PKCE, HTTPS dispatch with retries / pagination / rate-limit handling, the connection state machine, lazy refresh, AES-256-GCM encryption-at-rest, and OpenAPI / Google-discovery ingestion. Real-provider validation lives under `tests/providers/` as `@pytest.mark.integration` tests that the operator runs with their own credentials.
+
+## Layout
+
+```
+prototype/python/
+├── pyproject.toml                # uv project; deps: httpx, pydantic, cryptography, jsonschema, pytest
+├── README.md                     # this file
+├── src/uacp_prototype/
+│   ├── spec/                     # .uacp loader, JSON Schema validation, pydantic models per §3.1
+│   ├── auth/                     # AuthMethod Protocol + OAuth 2.0 authcode/PKCE per §2.2.1
+│   ├── dispatch/                 # HTTP client + pagination loops + streaming placeholder per §4
+│   ├── lifecycle/                # State machine per §5.1, refresh per §5.2
+│   ├── security/                 # secret:// resolver + AES-256-GCM envelope encryption per §6
+│   ├── connections/              # OpenAPI / Google-discovery ingestion per §3.6
+│   └── cli.py                    # `uacp validate`, `uacp ingest-openapi`, `uacp dispatch`
+├── examples/google/
+│   ├── gmail-send.uacp           # Gmail users.messages.send
+│   └── google-calendar-list.uacp # Calendar events.list with cursor pagination
+└── tests/
+    ├── unit/                     # mock-based unit tests; run during normal pytest
+    └── providers/                # @pytest.mark.integration; require operator OAuth setup
+```
+
+## Running
+
+```bash
+cd /Users/alexanderwalton/Desktop/UACP/prototype/python
+
+# install dependencies into a uv-managed venv
+uv sync --extra dev
+
+# run unit tests (no integration tests; mocks for HTTP and time)
+uv run pytest tests/unit
+
+# CLI
+uv run uacp --help
+uv run uacp validate examples/google/gmail-send.uacp
+uv run uacp ingest-openapi https://www.googleapis.com/discovery/v1/apis/gmail/v1/rest --output gmail.uacp
+```
+
+## Conformance posture
+
+This prototype satisfies the `MUST` requirements across:
+
+- **Stage 2** (authentication) — OAuth 2.0 authorization-code with PKCE; OAuth 2.0 client-credentials, OAuth 2.0 device-code, OAuth 1.0a, AWS SigV4, HMAC-signature, API-key (header / query), and `custom_auth` are stubs that raise `NotImplementedError` and will be implemented in subsequent provider sessions (Stage 8b through 8e).
+- **Stage 3** (schema) — hand-authored canonical JSON loading and OpenAPI 3.x / Google discovery ingestion. `curl`-paste and LLM inference are stubs.
+- **Stage 4** (dispatch) — HTTPS-only, retry policy, pagination patterns (cursor / offset / link_header / none), canonical error shape, rate-limit handling. Streaming is placeholder.
+- **Stage 5** (lifecycle) — seven-state machine, lazy refresh (the `MUST` floor; proactive refresh is `SHOULD` and not implemented in this prototype), refresh-token rotation handled atomically.
+- **Stage 6** (security) — `secret://` resolver, AES-256-GCM envelope encryption-at-rest, `local-keyring` simulated as a filesystem store at `~/.uacp/secrets/`, master key at `~/.uacp/master.key`. `vault` and `aws-secrets-manager` resolvers raise `NotImplementedError` until corresponding provider sessions land.
+
+## Integration tests — operator setup
+
+The integration tests under `tests/providers/test_google.py` execute real OAuth 2.0 flows against Google's authorization server and real Gmail / Calendar API calls. They are skipped by default; running them requires:
+
+1. **Register an OAuth client on Google Cloud Console.**
+   - Visit https://console.cloud.google.com/, create or select a project.
+   - APIs & Services → Library → enable **Gmail API** and **Google Calendar API**.
+   - APIs & Services → Credentials → Create Credentials → OAuth client ID → application type "Desktop app". Download the client JSON.
+   - APIs & Services → OAuth consent screen → set up the consent screen for "External" user type (or "Internal" if your account is in a Workspace), add the scopes `https://www.googleapis.com/auth/gmail.send` and `https://www.googleapis.com/auth/calendar.readonly`. Add your own email address to the test users.
+
+2. **Populate `.env` in `prototype/python/`** with:
+   ```
+   UACP_GOOGLE_CLIENT_ID=<client id from the JSON>
+   UACP_GOOGLE_CLIENT_SECRET=<client secret from the JSON>
+   UACP_GOOGLE_TEST_EMAIL=<the email you added as a test user>
+   UACP_GOOGLE_REDIRECT_URI=http://localhost:8765/oauth/callback
+   ```
+   `python-dotenv` is not a project dependency; export the variables directly or `source .env` before running.
+
+3. **Run the integration tests** with the marker enabled:
+   ```bash
+   uv run pytest tests/providers -m integration
+   ```
+   The first run launches the OAuth flow in a browser; subsequent runs reuse the persisted token under `~/.uacp/secrets/`.
+
+The test sends an email to the test address and lists the next ten calendar events on the test account. Both are non-destructive against the test account (the email lands in the user's own inbox; the list is read-only).
+
+## Spec correspondence
+
+Every module's docstring names the spec sections it implements. Module-level test files under `tests/unit/` exercise the spec's MUSTs at the unit level. The end-to-end mock test under `tests/unit/test_end_to_end_mock.py` ties the layers together.
