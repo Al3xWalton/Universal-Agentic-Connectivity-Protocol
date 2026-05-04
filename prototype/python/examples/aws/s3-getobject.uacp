@@ -1,0 +1,77 @@
+{
+  "$schema": "https://uacp.spec/v1/schema.json",
+  "name": "aws-s3-getobject",
+  "version": "0.1.0",
+  "description": "AWS S3 GetObject — download an object from an S3 bucket. Authenticates with SigV4 (per §2.5.1) using long-lived AWS access keys or STS-derived session credentials. Response body is binary content; content type comes from the wire Content-Type response header.",
+  "authentication": {
+    "method": "aws_sigv4",
+    "access_key_ref": "secret://local-keyring/aws#access_key_id",
+    "secret_key_ref": "secret://local-keyring/aws#secret_access_key",
+    "session_token_ref": "secret://local-keyring/aws#session_token",
+    "service": "s3",
+    "region": "us-east-1"
+  },
+  "dispatch": {
+    "base_url": "https://s3.us-east-1.amazonaws.com",
+    "default_headers": {
+      "Accept": "*/*"
+    },
+    "default_timeout_ms": 60000,
+    "default_user_agent": "uacp-prototype/0.1"
+  },
+  "operations": [
+    {
+      "id": "s3_getobject",
+      "summary": "Download an object from an S3 bucket.",
+      "description": "GETs the object at the named bucket+key. Uses path-style addressing (https://s3.{region}.amazonaws.com/{bucket}/{key}); virtual-hosted-style addressing (https://{bucket}.s3.{region}.amazonaws.com/{key}) is also supported by S3 and would be expressed by changing dispatch.base_url and the request.path template. Path-style is chosen for the example because it works with all bucket names, including those containing dots that virtual-hosted-style cannot address. Response is binary content; the actual MIME type comes from the wire Content-Type header.",
+      "tags": ["aws", "s3", "read"],
+      "idempotency": "idempotent",
+      "request": {
+        "method": "GET",
+        "path": "/{bucket}/{key}",
+        "path_parameters": {
+          "type": "object",
+          "required": ["bucket", "key"],
+          "properties": {
+            "bucket": {
+              "type": "string",
+              "description": "The S3 bucket name. Must conform to S3's bucket-naming rules."
+            },
+            "key": {
+              "type": "string",
+              "description": "The object key. May contain forward slashes for prefix-style organization."
+            }
+          }
+        }
+      },
+      "response": {
+        "200": {
+          "description": "Object content. The MIME type is in the Content-Type response header; the dispatcher returns the raw bytes verbatim.",
+          "body": {
+            "media_type": "application/octet-stream",
+            "format": "binary"
+          }
+        },
+        "404": {
+          "description": "Object or bucket not found. S3 returns an XML error envelope with a Code element.",
+          "body": {
+            "media_type": "application/xml",
+            "format": "xml"
+          }
+        },
+        "default": {
+          "description": "S3 error response. XML envelope with Code, Message, RequestId, and HostId fields.",
+          "body": {
+            "media_type": "application/xml",
+            "format": "xml"
+          }
+        }
+      },
+      "source": {
+        "type": "openapi",
+        "url": "https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html",
+        "ingested_at": "2026-05-04T04:00:00Z"
+      }
+    }
+  ]
+}

@@ -1,0 +1,132 @@
+{
+  "$schema": "https://uacp.spec/v1/schema.json",
+  "name": "aws-s3-listobjectsv2",
+  "version": "0.1.0",
+  "description": "AWS S3 ListObjectsV2 — list objects in an S3 bucket. Authenticates with SigV4 per §2.5.1. Returns an XML response body with cursor-paginated results via the NextContinuationToken element nested under ListBucketResult.",
+  "authentication": {
+    "method": "aws_sigv4",
+    "access_key_ref": "secret://local-keyring/aws#access_key_id",
+    "secret_key_ref": "secret://local-keyring/aws#secret_access_key",
+    "session_token_ref": "secret://local-keyring/aws#session_token",
+    "service": "s3",
+    "region": "us-east-1"
+  },
+  "dispatch": {
+    "base_url": "https://s3.us-east-1.amazonaws.com",
+    "default_headers": {
+      "Accept": "*/*"
+    },
+    "default_timeout_ms": 30000,
+    "default_user_agent": "uacp-prototype/0.1"
+  },
+  "operations": [
+    {
+      "id": "s3_listobjectsv2",
+      "summary": "List objects in an S3 bucket, optionally filtered by prefix.",
+      "description": "GETs the bucket root with list-type=2 to invoke the V2 list API. Cursor pagination via the continuation-token mechanism: send `continuation-token` query parameter on subsequent calls, read `NextContinuationToken` from the XML response. The `IsTruncated` element indicates whether more results exist. Uses path-style addressing (https://s3.{region}.amazonaws.com/{bucket}); virtual-hosted-style addressing is the canonical alternative.",
+      "tags": ["aws", "s3", "read"],
+      "idempotency": "idempotent",
+      "request": {
+        "method": "GET",
+        "path": "/{bucket}",
+        "path_parameters": {
+          "type": "object",
+          "required": ["bucket"],
+          "properties": {
+            "bucket": {
+              "type": "string",
+              "description": "The S3 bucket name."
+            }
+          }
+        },
+        "query_parameters": {
+          "type": "object",
+          "required": ["list-type"],
+          "properties": {
+            "list-type": {
+              "type": "string",
+              "const": "2",
+              "default": "2",
+              "description": "Must be '2' to invoke the V2 list API."
+            },
+            "prefix": {
+              "type": "string",
+              "description": "Filter objects whose key begins with this prefix."
+            },
+            "continuation-token": {
+              "type": "string",
+              "description": "Cursor returned by a prior call's NextContinuationToken when IsTruncated was true."
+            },
+            "max-keys": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000,
+              "default": 1000,
+              "description": "Maximum objects per page."
+            },
+            "delimiter": {
+              "type": "string",
+              "description": "Optional delimiter for hierarchical listing (typically '/')."
+            },
+            "start-after": {
+              "type": "string",
+              "description": "Start listing after this key. Mutually exclusive with continuation-token."
+            }
+          }
+        }
+      },
+      "response": {
+        "200": {
+          "description": "XML ListBucketResult envelope. Contents is an array of objects (Key, Size, ETag, LastModified, StorageClass). NextContinuationToken is present when IsTruncated=true.",
+          "body": {
+            "media_type": "application/xml",
+            "format": "xml",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "ListBucketResult": {
+                  "type": "object",
+                  "properties": {
+                    "Name": { "type": "string" },
+                    "Prefix": { "type": "string" },
+                    "MaxKeys": { "type": "string" },
+                    "KeyCount": { "type": "string" },
+                    "IsTruncated": { "type": "string" },
+                    "NextContinuationToken": { "type": "string" },
+                    "Contents": {
+                      "description": "Array of objects (or single object for a one-result page). XML→dict conversion produces a list when multiple Contents elements exist."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "404": {
+          "description": "Bucket not found. S3 returns an XML error envelope.",
+          "body": {
+            "media_type": "application/xml",
+            "format": "xml"
+          }
+        },
+        "default": {
+          "description": "S3 error response. XML envelope with Code, Message, RequestId, and HostId.",
+          "body": {
+            "media_type": "application/xml",
+            "format": "xml"
+          }
+        }
+      },
+      "pagination": {
+        "pattern": "cursor",
+        "request_cursor_parameter": "continuation-token",
+        "response_cursor_path": "$.ListBucketResult.NextContinuationToken"
+      },
+      "source": {
+        "type": "openapi",
+        "url": "https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html",
+        "ingested_at": "2026-05-04T04:00:00Z"
+      }
+    }
+  ]
+}
