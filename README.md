@@ -6,9 +6,9 @@ UACP is a peer to the [Model Context Protocol (MCP)](https://modelcontextprotoco
 
 ## Status
 
-This repository contains specification documents only. UACP is under active development at version `v0.1`, on a path toward a `v1.0` freeze. `v0.x` is unstable and subject to revision without backward-compatibility guarantees. The rules governing later changes are specified in [Stage 7 — Versioning](./docs/07-versioning.md) (forthcoming).
+UACP `v1.0.0` is the first stable release, frozen on 2026-05-04. Subsequent `v1.x` releases are non-breaking per [Stage 7 — Versioning](./docs/07-versioning.md) §7.2; `v2` follows the public RFC process described in §7.6.
 
-The reference implementation lives in a separate repository (the AVA monorepo, at `backend/services/connections-broker/`). This repository contains no implementation code.
+This repository contains the canonical specification under [`docs/`](./docs/), the JSON Schema artifact at [`schemas/uacp.json`](./schemas/uacp.json), and a Python reference implementation under [`prototype/python/`](./prototype/python/). The production reference implementation will live in the AVA monorepo at `backend/services/connections-broker/`.
 
 ## Read the specification
 

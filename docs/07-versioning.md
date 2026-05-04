@@ -257,14 +257,14 @@ A `Conforming Implementation` of `v1.<n>` need not update its declared support t
 
 ### `v1.0` freeze
 
-`v1.0` is reached after [Stage 8 — Conformance](./08-conformance.md) and [Stage 9 — Prototype](./09-prototype.md) validate that the spec is implementable, and after [Stage 10 — Freeze](./10-freeze.md) declares the spec frozen. The cycle:
+`v1.0.0` was released on **2026-05-04** after Stage 8 validated the spec across five provider implementations (Google, Slack, AWS, GitHub, NotebookLM — landing the body-predicate, body-format, link-header conformance, and session_cookie amendments) and Stage 9 froze the canonical `$schema` URL at the v1.0.0 git tag and validated MCP composition against the prototype. From the moment of freeze, the backward-compatibility rules in §7.2 bind: every change to v1.x is editorial, non-breaking, or held for v2.
+
+The design cycle, for historical reference:
 
 1. Stages 0 through 7 are the design stages — this document is the last of them.
-2. Stage 8 specifies the conformance test suite that demonstrates `Conforming Implementation` claims are testable.
-3. Stage 9 builds a reference implementation against the design.
-4. Stage 10 freezes the spec at `v1.0`. From that moment, the backward-compatibility rules in §7.2 begin to bind.
-
-Until `v1.0` freeze, `v0.x` is unstable. The spec documents are written in normative voice because they specify what `v1.x` will be, not what `v0.x` is. The current state is a *target*, not a *contract*; implementations building against `v0.x` accept that the spec may change underneath them.
+2. Stage 8 produced the conformance evidence: five real-provider implementations behind the prototype's integration-test suite plus the unit-test surface.
+3. Stage 9 froze the spec at v1.0.0 and demonstrated MCP-side composition (Principle 4) end-to-end.
+4. Stage 10 — the production reference implementation in AVA's `backend/services/connections-broker/` — is the next gate after freeze.
 
 ## 7.6 Path to `v2`
 

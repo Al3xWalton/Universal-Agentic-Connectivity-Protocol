@@ -6,7 +6,7 @@ This document is consistent with the foundational principles in [Stage 1 — Pri
 
 ## 2.0 Overview
 
-A UACP `Connection` becomes `active` only after an `Authentication Method` has produced credential material that the dispatch runtime can present to the `Provider`. UACP describes that exchange in two parts: the **method registry** (Section 2.1) lists the stable identifiers a `.uacp` artifact selects from when declaring how a `Provider` authenticates; and the **method specifications** (Sections 2.2 through 2.6) describe the wire shape of each registered method and the rules a `Conforming Implementation` MUST follow when executing it.
+A UACP `Connection` becomes `active` only after an `Authentication Method` has produced credential material that the dispatch runtime can present to the `Provider`. UACP describes that exchange in two parts: the **method registry** (Section 2.1) lists the stable identifiers a `.uacp` artifact selects from when declaring how a `Provider` authenticates; and the **method specifications** (Sections 2.2 through 2.6 plus 2.10) describe the wire shape of each registered method and the rules a `Conforming Implementation` MUST follow when executing it.
 
 Every `.uacp` artifact describing authentication MUST be safe to publish publicly. Artifacts describe the *procedure* by which credentials are obtained — endpoints, identifiers, signature schemes, scope sets — but never embed the credentials themselves. Credentials are referenced exclusively through the `secret://` reference convention defined in Section 2.7. This separation is the structural commitment that makes Principle 7 (security by default) and Principle 10 (public artifacts, private secrets) load-bearing rather than aspirational.
 
@@ -14,13 +14,14 @@ The authentication subsystem is **pluggable**. The registered set in Section 2.1
 
 ### In scope
 
-The `v1.x` registered set comprises nine `Authentication Method`s, grouped as follows:
+The `v1.x` registered set comprises ten `Authentication Method`s, grouped as follows:
 
 - **OAuth 2.0** — three grant types (authorization code with PKCE, client credentials, device authorization) plus refresh-token semantics, server-metadata discovery, and JWT access-token handling (Section 2.2).
 - **OAuth 1.0a** — the three-legged flow with HMAC-SHA1 signing, retained for parity with services that have not migrated (Section 2.3).
 - **API key** — header-based and query-parameter-based variants, plus a composite shape for providers requiring multiple keys (Section 2.4).
 - **Signed-request schemes** — AWS Signature Version 4 and a generic HMAC-signature mechanism for providers that sign each request (Section 2.5).
 - **Custom authentication** — an explicit escape hatch for providers whose authentication does not fit any registered method, with constraints documented in Section 2.6.
+- **Session-cookie authentication** — browser-equivalent session replay for grey-zone provider integrations whose authentication has no public API surface, with mandatory ToS-violation-risk acknowledgment (Section 2.10).
 
 Section 2.7 specifies the `secret://` credential-reference format that all of the above methods MUST use. Section 2.8 specifies the extension mechanism. Section 2.9 summarizes the conformance level of each method for a `Conforming Implementation` of `v1.x`.
 

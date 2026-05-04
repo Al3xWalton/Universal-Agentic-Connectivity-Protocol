@@ -6,9 +6,9 @@ The Universal Agentic Connectivity Protocol (UACP) is a wire format and runtime 
 
 ## Status
 
-This document is part of the canonical UACP specification, currently under active development. The specification is versioned `v0.1` and is on a path to a `v1.0` freeze. All `v0.x` documents are subject to change without backward-compatibility guarantees. Once `v1.0` is published, the rules in [Stage 7 — Versioning](./07-versioning.md) (forthcoming) govern subsequent changes; in particular, all `v1.x` revisions MUST remain backward-compatible with `v1.0`.
+`v1.0.0` is the first stable release of UACP, frozen on 2026-05-04. Subsequent `v1.x` releases are non-breaking per [Stage 7 — Versioning](./07-versioning.md) §7.2; `v2` will follow the public RFC process described in §7.6 if and when accumulated demand justifies it.
 
-UACP is developed in public from day one. The reference implementation lives in the `connections-broker` service of the AVA monorepo (a separate repository); this repository contains specification documents only and contains no implementation code.
+UACP is developed in public from day one. A reference implementation in Python lives in this repository under `prototype/python/`; the production reference implementation will live in the AVA monorepo at `backend/services/connections-broker/`.
 
 ## Terminology
 
@@ -85,16 +85,13 @@ The UACP specification is composed of the documents under `docs/`, indexed by st
 
 | Stage | Document | Status | Scope |
 |---|---|---|---|
-| 0 | [`00-primer.md`](./00-primer.md) | Complete (this document) | Abstract, terminology, scope, prior-art comparison, document conventions. |
-| 1 | [`01-principles.md`](./01-principles.md) | Complete | Foundational design principles that constrain every later stage. |
-| 2 | [`02-authentication.md`](./02-authentication.md) | Complete | Authentication subsystem: core methods, extension mechanism, credential storage rules. |
-| 3 | [`03-schema.md`](./03-schema.md) | Complete | Schema layer: `.uacp` artifact shape, JSON Schema profile, validation rules. |
-| 4 | [`04-dispatch.md`](./04-dispatch.md) | Complete | Dispatch runtime: invocation surface, parameter binding, transport rules, error normalization. |
-| 5 | [`05-lifecycle.md`](./05-lifecycle.md) | Complete | Connection lifecycle: creation, refresh, revocation, observability. |
-| 6 | [`06-security.md`](./06-security.md) | Complete | Security model: secret storage, scope enforcement, threat model. |
-| 7 | [`07-versioning.md`](./07-versioning.md) | Complete | Versioning policy and the public RFC process for `v2` and beyond. |
-| 8 | `08-conformance.md` | Pending | Conformance test suite definition and the procedure for self-certification. |
-| 9 | `09-prototype.md` | Pending | Reference-implementation guidance and prototype freeze criteria. |
-| 10 | `10-freeze.md` | Pending | `v1.0` freeze rules and the migration path from `v0.x` artifacts. |
+| 0 | [`00-primer.md`](./00-primer.md) | **Stable** (this document) | Abstract, terminology, scope, prior-art comparison, document conventions. |
+| 1 | [`01-principles.md`](./01-principles.md) | **Stable** | Foundational design principles that constrain every later stage. |
+| 2 | [`02-authentication.md`](./02-authentication.md) | **Stable** | Authentication subsystem: ten registered methods, extension mechanism, credential storage rules, session_cookie ToS gate (§2.10). |
+| 3 | [`03-schema.md`](./03-schema.md) | **Stable** | Schema layer: `.uacp` artifact shape, JSON Schema profile, validation rules, body-predicate failure detection (§3.3), body-format discriminator (§3.3), pagination patterns (§3.4). |
+| 4 | [`04-dispatch.md`](./04-dispatch.md) | **Stable** | Dispatch runtime: invocation surface, parameter binding, transport rules, error normalization. |
+| 5 | [`05-lifecycle.md`](./05-lifecycle.md) | **Stable** | Connection lifecycle: creation, refresh, revocation, observability. |
+| 6 | [`06-security.md`](./06-security.md) | **Stable** | Security model: secret storage, scope enforcement, threat model. |
+| 7 | [`07-versioning.md`](./07-versioning.md) | **Stable** | Versioning policy and the public RFC process for `v2` and beyond. |
 
-A reference implementation of `v1.x` lives outside this repository, in the AVA monorepo, at `backend/services/connections-broker/`. The specification is the canonical artifact; implementations follow.
+A Python reference implementation lives in this repository under [`prototype/python/`](../prototype/python/); the production reference implementation will live in the AVA monorepo at `backend/services/connections-broker/`. The specification is the canonical artifact; implementations follow.
