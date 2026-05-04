@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol/v1.0.0/schemas/uacp.json",
-  "title": "UACP v1.0 Artifact Schema",
-  "description": "Canonical JSON Schema for a UACP v1.0 (.uacp) artifact. Validates the wire format described in docs/03-schema.md (top-level structure, operation shape, request/response/pagination shapes), docs/02-authentication.md (the ten registered authentication methods + the x-namespaced extension surface), and docs/06-security.md §6.2 (the registered secret-store types and the secret:// credential URI convention). The schema is JSON Schema 2020-12. Semantic validations beyond pure structural checking — bidirectional path-parameter coverage, embedded-credential detection, $ref locality, inferred-source provenance completeness — are NOT expressed in this schema and MUST be enforced by the implementation's validation layer per §3.10.",
+  "$id": "https://raw.githubusercontent.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol/v1.1.0/schemas/uacp.json",
+  "title": "UACP v1.1 Artifact Schema",
+  "description": "Canonical JSON Schema for a UACP v1.1 (.uacp) artifact. Validates the wire format described in docs/03-schema.md (top-level structure, operation shape, request/response/pagination shapes, including the §3.12 session-capture schema source added in v1.1), docs/02-authentication.md (the ten registered authentication methods + the x-namespaced extension surface), docs/04-dispatch.md (the optional dispatch.transport hint added in v1.1 per §4.10), and docs/06-security.md §6.2 (the registered secret-store types and the secret:// credential URI convention). The schema is JSON Schema 2020-12 and is backward-compatible with every v1.0-valid artifact per §7.2. Semantic validations beyond pure structural checking — bidirectional path-parameter coverage, embedded-credential detection, $ref locality, inferred-source provenance completeness, capture-source provenance completeness — are NOT expressed in this schema and MUST be enforced by the implementation's validation layer per §3.10.",
   "type": "object",
   "required": ["authentication", "dispatch", "operations"],
   "properties": {
@@ -479,6 +479,23 @@
           },
           "additionalProperties": true,
           "description": "Per §3.8: an inferred source MUST carry non-empty model + description + reviewed_at; the reviewed_at field is the operator's signature on the LLM-generated artifact."
+        },
+        {
+          "type": "object",
+          "required": ["type", "captured_at", "user_intent", "capture_ref", "reviewed_at"],
+          "properties": {
+            "type": { "const": "capture" },
+            "captured_at": { "type": "string", "format": "date-time" },
+            "user_intent": { "type": "string", "minLength": 1 },
+            "capture_ref": {
+              "type": "string",
+              "pattern": "^secret://[a-z][a-z0-9_-]*/[^\\s]+$",
+              "description": "secret:// URI per §2.7 pointing at the underlying capture artifact (HAR or equivalent)."
+            },
+            "reviewed_at": { "type": "string", "format": "date-time" }
+          },
+          "additionalProperties": true,
+          "description": "Per §3.12 (added in v1.1): a capture-sourced operation MUST carry captured_at + user_intent + capture_ref + reviewed_at. The reviewed_at field is the operator's signature on the inferred-from-capture artifact, parallel to §3.8's review gate."
         }
       ]
     },

@@ -596,8 +596,9 @@ From highest to lowest priority:
 
 1. **Explicit user input.** Hand-authored canonical JSON that the user typed or edited directly. This includes operations whose `source` field is absent and operations whose `source` is set to user-driven (the `source` field's `type` value for hand-authored operations is left to implementation convention; the spec does not register a `"hand"` or `"user"` value because the absence of `source` is sufficient).
 2. **`curl`-paste.** Operations parsed from a `curl` invocation per §3.7. These reflect a working request the user verified outside UACP and SHOULD be trusted over machine-derived alternatives.
-3. **OpenAPI ingestion.** Operations derived from a published OpenAPI specification per §3.6. These are authoritative when the `Provider` publishes them but represent the `Provider`'s self-description, which may diverge from runtime reality.
-4. **LLM-inferred.** Operations produced by the inference path per §3.8. These have the highest review burden and the lowest precedence by default.
+3. **Captured session.** Operations inferred from recorded browser traffic per §3.12 (added in `v1.1`). These reflect the user's actual demonstrated behavior against the deployed `Provider`, not a published abstraction; they outrank OpenAPI when the two diverge because the captured request is what the live service actually accepted at the moment of capture.
+4. **OpenAPI ingestion.** Operations derived from a published OpenAPI specification per §3.6. These are authoritative when the `Provider` publishes them but represent the `Provider`'s self-description, which may diverge from runtime reality.
+5. **LLM-inferred.** Operations produced by the inference path per §3.8. These have the highest review burden and the lowest precedence by default.
 
 ### Conflict resolution at authoring time
 
@@ -660,6 +661,7 @@ This section summarizes the conformance level of each schema source and the load
 | OpenAPI 2.0 (Swagger) ingestion | §3.6 | SHOULD support |
 | `curl`-paste parsing | §3.7 | SHOULD support |
 | LLM inference | §3.8 | MAY support |
+| Session capture | §3.12 (added in `v1.1`) | MAY support |
 
 The conformance levels split along the line between "the implementation must be able to load any well-formed `v1.x` artifact" (everything `MUST` above) and "the implementation may offer additional authoring affordances" (the `SHOULD` and `MAY` rows). An implementation that supports only hand-authored and OpenAPI-3.x-ingested artifacts is conforming; an implementation that adds `curl`-paste, OpenAPI-2.0, and LLM-inference support is conforming-with-richer-authoring.
 
@@ -679,9 +681,113 @@ A `Conforming Implementation` of `v1.x` MUST satisfy all of the following at art
 The following requirements are normative and apply to every `Conforming Implementation` of `v1.x`:
 
 - A `Conforming Implementation` **MUST NOT** silently persist an LLM-inferred schema without an explicit user-approval step that satisfies the requirements of §3.8.
+- A `Conforming Implementation` that supports session-capture authoring per §3.12 (added in `v1.1`) **MUST NOT** silently persist a capture-inferred schema without an explicit user-approval step that satisfies the requirements of §3.12.
 - A `Conforming Implementation` **MUST NOT** load `.uacp` artifacts that fail JSON Schema validation per §3.10.
 - A `Conforming Implementation` **MUST NOT** include credentials, in plaintext or any other form, in any field of any operation. The credential-reference convention of §2.7 is the only path; this rule is the schema-layer restatement of Principle 7 (security by default).
 - A `Conforming Implementation` **MUST NOT** resolve remote `$ref`s at dispatch time. All `$ref` resolution is local to the artifact's `definitions` block, performed at parse time. Per Principle 9 (determinism).
 - A `Conforming Implementation` **MUST NOT** silently drop fields it does not understand from a `.uacp` artifact. Unknown fields are permitted (forward compatibility) but their presence is preserved on round-trip; an implementation that re-serializes the artifact and writes back to storage MUST round-trip unknown fields verbatim. The round-trip property is what makes the §3.9 source-priority story load-bearing across implementation versions.
 
 The cumulative effect of the MUSTs and MUST NOTs is that a `Conforming Implementation` of `v1.x` reliably loads, validates, and dispatches against any well-formed `v1.x` artifact regardless of the source the artifact came from, and that the inference path's safety property (mandatory user review) is enforced at the moment it matters — at authoring time — rather than deferred into runtime where it would be too late.
+
+## 3.12 Schema source: session capture
+
+*Added in `v1.1`.* A new schema source sibling to §3.6 (OpenAPI), §3.7 (`curl`-paste), and §3.8 (LLM inference). Section 3.12 is positioned at the end of §3 to preserve the `v1.0` numbering of §3.6 — §3.11; logically it belongs between §3.8 (LLM inference) and §3.9 (Source priority). §3.9's priority order has been amended in `v1.1` to slot the captured-session source between `curl`-paste and OpenAPI.
+
+### Overview
+
+When a `Provider` has no published API specification and the user can demonstrate the intended operations in a browser, an authoring implementation MAY capture the resulting HTTP traffic and infer `.uacp` operations from the recorded requests. The captured cookies typically become the `Connection`'s credential material under §2.10's `session_cookie` authentication method; the captured requests become the operation set. This pairing — capture-derived operations dispatched through `session_cookie` auth — is the canonical use case for §3.12, but the section's rules apply to any capture-sourced operation regardless of the eventual auth method.
+
+Session capture is the highest-fidelity source UACP recognizes for unspecified `Provider`s: it records what the user actually did, against the exact URL, with the exact headers and body the live service accepted, at the exact moment of capture. Where OpenAPI (§3.6) describes the `Provider`'s self-description (which may be stale or aspirational) and where LLM inference (§3.8) describes the LLM's best guess (which may hallucinate fields), capture describes a transcript of working interactions. The `v1.1` priority order in §3.9 reflects this: capture outranks OpenAPI when the two diverge, on the strength of empirical contact with the deployed service.
+
+### Capture format
+
+The captured artifact is a list of HTTP request/response pairs in canonical form. Each entry has the shape:
+
+```jsonc
+{
+  "request": {
+    "method": "POST",
+    "url": "https://example.com/api/v2/resource",
+    "headers": {
+      "Content-Type": "application/json",
+      "Cookie": "<flagged variable per below>"
+    },
+    "body": "<request body, possibly truncated for size>"
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "body": "<response body, possibly truncated for size>"
+  },
+  "timestamp": "2026-05-04T12:34:56.789Z",
+  "browser_metadata": {
+    "user_agent": "...",
+    "viewport": { "width": 1280, "height": 800 }
+  }
+}
+```
+
+Implementations MAY use the [HAR (HTTP Archive) format](https://w3c.github.io/web-performance/specs/HAR/Overview.html) as the on-disk wire shape. UACP does not mandate HAR but RECOMMENDS it because HAR is standardized, browser-native, and supported by every major capture tool. Implementations that use a non-HAR shape MUST document the conversion.
+
+Each entry MUST include the request method, the request URL (absolute, including scheme and host), and the response status. Entries MUST include the request headers, but headers whose value changes per request — `Date`, `Authorization`, anti-CSRF tokens, idempotency keys, request-correlation identifiers — MUST be recorded with a `variable` flag (or, equivalently, with a placeholder value) so downstream inference does not bake the captured value into the resulting operation as a constant. Implementations MAY truncate request and response bodies that exceed an implementation-defined size cap; the `.uacp` artifact's `source.captured_at` timestamp identifies which capture each operation derives from, and the truncated body is sufficient for shape inference (truncated values MUST be marked as such).
+
+### Operation inference from captures
+
+The implementation analyzes the captured session and clusters requests into candidate operations. The clustering rules:
+
+- Requests against the same endpoint with the same HTTP method are grouped into a single candidate operation.
+- Path parameters are inferred by URL pattern matching across the cluster: when the same URL template differs only in one path segment across multiple captured requests (e.g., `/users/123/posts` and `/users/456/posts`), the differing segment is promoted to a path parameter.
+- Required versus optional query parameters are inferred from frequency: parameters present in every captured request in the cluster are likely required; parameters present in some are likely optional.
+- Required versus optional body fields follow the same frequency rule.
+- Response shape is inferred from the union of observed response bodies in the cluster.
+
+The clustering rules are heuristic; the LLM inference path of §3.8 refines the result. Provided with the captured traffic and the user's stated intent, the LLM produces the final `.uacp` draft — applying §3.8's prompt + review discipline to the capture-derived candidate operations. The combination is the dominant pattern: capture sets the empirical floor (this is what the wire actually accepts); LLM inference fills in summaries, descriptions, parameter names, and the operation `id` charset.
+
+### Provenance metadata
+
+A capture-sourced operation MUST include a `source` object with:
+
+```jsonc
+{
+  "type": "capture",
+  "captured_at": "2026-05-04T12:34:56.789Z",
+  "user_intent": "list my notebooks in NotebookLM",
+  "capture_ref": "secret://local-keyring/captures/notebooklm-2026-05-04#har"
+}
+```
+
+The fields:
+
+- **`type`** — the literal string `"capture"`. Required.
+- **`captured_at`** — RFC 3339 timestamp of the capture session. Required.
+- **`user_intent`** — non-empty natural-language description of what the user was demonstrating. Required. This is the parallel to §3.8's `source.description`.
+- **`capture_ref`** — a `secret://`-style reference per §2.7 pointing at the underlying capture artifact (the HAR file or equivalent). The capture itself is stored separately (encrypted at rest per §6.3) so that future refinement passes can re-analyze the original traffic without re-capturing. Required.
+- **`reviewed_at`** — RFC 3339 timestamp at which the user approved the inferred operations. Required (per the user-review rule below).
+
+A capture artifact often contributes multiple operations to a single `.uacp` file. Each operation carries its own `source` block; implementations MAY share a single `capture_ref` across all operations derived from the same capture session.
+
+### User review
+
+Capture-sourced operations require the same explicit user review as LLM-inferred operations under §3.8: the implementation MUST present the inferred operation set, a summary of the underlying captures (which requests cluster into which operations), and an option to refine before the user explicitly approves. The `reviewed_at` field on each `source` block records the approval. Persisting a capture-sourced operation with `reviewed_at` absent or empty is a §3.10 validation failure.
+
+The review surface is implementation-defined. Recommended elements:
+
+- The list of inferred operations with their derived names and shapes.
+- For each operation, the cluster of captured requests it summarizes (with a count, and a sample request).
+- A diff view when the capture suggests changes to an existing operation that came from a higher-priority source.
+- An explicit affordance to drop, rename, or merge inferred operations before approval.
+
+### Capture infrastructure
+
+The capture infrastructure (browser instrumentation, HTTP traffic recording, HAR export) is implementation-specific. UACP requires only that the captured artifact validates, that the provenance fields are populated, and that the user review precedes persistence. Reference implementations MAY use Playwright, browser DevTools' "Save all as HAR" surface, mitmproxy, or any equivalent traffic-recording tool. The choice does not affect conformance.
+
+### Conformance for session capture
+
+A `Conforming Implementation` MAY support session capture (parallel to §3.8's MAY for LLM inference). When the implementation supports it:
+
+- The user-review requirement is **MUST**, parallel to §3.8.
+- The capture artifact (HAR or equivalent) MUST be persisted under the `capture_ref` URI before the inferred operations are persisted, so the round-trip refinement path remains available.
+- The implementation MUST treat `source.type == "capture"` as a recognized provenance value during load and dispatch — this is a load-time MUST inherited from §3.11 even for implementations that do not support capture as an authoring source.
+- The implementation SHOULD strip credential-bearing headers (cookies, `Authorization` headers, anti-CSRF tokens) from the captured artifact before storage, OR encrypt the capture at rest per §6.3 if those headers are needed for refinement. Captures often contain live session credentials; treating them with secret-store discipline avoids the embedded-credential prohibition of §3.10.
+
+The asymmetry between *load* and *author* is the same as for §3.8 inference: a stored `.uacp` artifact's `source.type == "capture"` field does not require the loading implementation to support capture authoring at the time of load. The `reviewed_at` timestamp is the durable record of the authoring-time review; once the artifact is stored, every loading implementation treats it identically regardless of capture support.
