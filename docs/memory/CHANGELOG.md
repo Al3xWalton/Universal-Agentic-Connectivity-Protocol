@@ -549,3 +549,66 @@ Fourth per-provider session. The shortest of the prototype-validation arc: `api_
 **UACP commit chain on top of `30f3ea4` (Stage 8d memory tip)**: `7d1067d feat(prototype): implement session_cookie authentication` → `7ca10b6 feat(prototype): implement LLM-inferred schema authoring (§3.8)` → `13ae3ee fix(spec): §2.10 — register session_cookie as v1.x auth method` → `162dfe1 feat(prototype): NotebookLM examples + session_cookie dispatch wiring`. Tip is `162dfe1` until this memory commit lands.
 
 **UACP commit plan**: 4 prototype/spec commits already landed. Single memory commit — `memory: UACP Stage 8e — session_cookie + LLM-inference + NotebookLM prototype`. Operator pushes manually.
+
+## 2026-05-04 — Stage 9 — UACP repo
+
+Closes the design phase. Five spec-repo commits + this memory commit + the `v1.0.0` git tag (created locally on the memory commit, not pushed). Stage 8 + Stage 9 status: complete. v1.0.0 frozen.
+
+### Spec freeze
+
+- **§3.10 placeholder `$schema` URL closed**. Canonical URL pinned at the v1.0.0 git tag: `https://raw.githubusercontent.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol/v1.0.0/schemas/uacp.json`. Future minor releases publish their own MAJOR.MINOR-pinned URLs per §7.1's existing bumping convention. Replacement done via bulk `perl -i -pe` across `docs/03-schema.md`, `docs/07-versioning.md`, `prototype/python/src/`, `prototype/python/tests/`, all 10 example `.uacp` files, plus the prototype's `DEFAULT_SCHEMA_URL` constant. `docs/03-schema.md` §3.10 prose + `docs/07-versioning.md` §7.1 prose updated to drop the placeholder language.
+- **`schemas/uacp.json` landed** — JSON Schema 2020-12 artifact validating the wire format. Covers top-level structure (authentication / dispatch / operations / definitions / encrypted_secrets); the ten registered authentication methods per §2.1 with method-specific shape constraints in `allOf`/`if-then` blocks (including the §2.10 session_cookie + literal-true `tos_acknowledged` rule); request method/path/parameters/body shapes per §3.2; response keys per §3.3; the body format discriminator per §3.3 Stage 8c; the FailurePredicate per §3.3 + §4.6 Stage 8b; the four pagination patterns per §3.4; the three source provenance shapes (openapi/curl/inferred) per §3.5–§3.8; the `secret://` URI convention per §2.7; EncryptedSecret with the no-recursion `key_ref` constraint per §6.2. **Verified**: well-formed JSON Schema 2020-12; all 10 example `.uacp` artifacts validate against it. Semantic checks beyond pure structural validation remain the implementation's responsibility per §3.10.
+- **SPEC.md rewritten** as a real entry-point document — version + status + released date block; reading order with **Stable** flips for all eight stage docs; conformance summary section linking §2.9, §3.11, §4.9, §5.7, §6.9, §7.7; schema section pointing at `schemas/uacp.json` + the canonical URL; versioning + license/governance pointers; post-freeze changes policy. Was a 25-line placeholder pointing at the per-stage docs.
+- **`docs/00-primer.md` Status section** flipped from "active development at v0.1, on a path to v1.0 freeze" to "v1.0.0 is the first stable release, frozen 2026-05-04". Per-stage status table inside the primer flipped Pending → **Stable** for Stages 0–7 (and dropped the Stage 8/9/10 rows since the conformance / prototype / freeze stages are now realized as memory commits + the v1.0.0 tag rather than pending stage docs).
+- **README Status section** flipped likewise; mentions the prototype + production-reference path.
+- **GOVERNANCE.md "When v2 becomes worth pursuing"** section added with concrete thresholds (3+ deprecated identifiers across registries; structural inadequacy of foundational constraints; adoption-driven feature-request cluster). Maintainer judgment remains the deciding mechanism per §7.6; thresholds are signals not bright lines. Trademark policy line updated to reflect that the policy remains a post-freeze deliverable.
+- **`docs/02-authentication.md` §2.0 In-scope** updated from "nine `Authentication Method`s" to "ten" with the §2.10 session-cookie row added.
+- **`docs/07-versioning.md` §7.5 v1.0 freeze subsection** rewritten in past tense — describes the design cycle that produced v1.0.0 rather than the prospective freeze gate. §7.1 reconciled with the existing MAJOR.MINOR-pinned-URL convention: the canonical URL pattern is `v1.<minor>.0` git tag, `v1.0.0` today, `v1.1.0` etc as future minor releases land.
+
+### MCP composition validation
+
+- **`prototype/python/src/uacp_prototype/mcp/`** — thin MCP server that walks a directory of `.uacp` files and exposes each operation as an MCP tool. Modules: `__init__.py` (public API), `__main__.py` (CLI entry point), `server.py` (the `UACPServer` class + `LoadedOperation` dataclass + `normalize_tool_name` + `build_dispatch_client_default` factory). Tool name = `<provider>_<operation_id>` with provider derived from the artifact's parent directory; dots / slashes normalize to underscores; 128-char cap enforced by truncation. Tool input schema derives from the operation's request shape per §3.2 — `path_params` / `query` / `body` / `extra_headers` as optional sub-objects matching `DispatchClient.dispatch`'s keyword API. Tool execution dispatches through the existing UACP runtime (`auth/`, `dispatch/`, `lifecycle/`, `security/`) so security and dispatch invariants apply transparently to MCP-side callers. Default credential resolver covers all five wired auth methods (oauth2_authorization_code, x-oauth2-workspace, api_key_header / api_key_query, aws_sigv4, session_cookie) reading from local-keyring + env vars per a documented scheme. Run as `python -m uacp_prototype.mcp --uacp-dir <path>`. Against `examples/` the server advertises 10 tools — one per operation across the five validated providers.
+- **`tests/unit/test_mcp_server.py`** — 20 unit tests covering `normalize_tool_name` (safe ASCII, dot/slash stripping, 128-char cap, underscore/hyphen preservation); `load_directory` (10-tool count against examples/, provider resolution, nonexistent dir rejection, malformed-artifact skip); tool-definition derivation (input schema, summary/method in description, query_parameters surface, path_parameters surface); routing (unknown tool → tool_not_found envelope; known tool → DispatchSuccess passes through; DispatchError → canonical envelope; credential-resolution failure → credential_resolution_failed envelope; arguments split correctly into path_params/query/extra_headers); MCP type validity.
+- **`tests/integration/test_mcp_composition.py`** — 8 `@pytest.mark.mcp_integration` tests pairing `UACPServer` with the MCP SDK's `ClientSession` over in-process memory streams (`mcp.shared.memory.create_connected_server_and_client_session`, no subprocess required). Tests: server_advertises_expected_tool_count, server_advertises_expected_tool_names, tool_schemas_match_uacp_request_shapes, tool_call_returns_dispatch_success, tool_call_arguments_pass_through_to_dispatch, dispatch_error_propagates_canonically_through_mcp, credential_resolution_failure_surfaces_through_mcp, multiple_providers_dispatch_independently. All 8 pass under `pytest -m mcp_integration`.
+- **Adds `mcp_integration` pytest marker** (separate from `integration` because MCP tests use the mcp SDK but no real provider credentials). Adds `mcp>=1.0` to dependencies.
+
+### Documentation
+
+- **`prototype/python/README.md` "MCP Composition" section** — how to start the server, the 10 advertised tools across the five providers, the operation-to-tool naming rules, sample `.claude/mcp.json` config for connecting Claude Code, env-var conventions for credential resolution per auth method, instructions for running the mcp_integration test suite.
+- **`RELEASE-v1.0.0.md`** (1396 words) — drafted GitHub release notes. Covers: design phase summary (Stages 0-7), prototype validation (Stage 8: five providers, four amendments tied to their provider rounds), Stage 9 MCP composition validation, what's stable in v1.0, deferred to v1.x, deferred to v2, spec-changes-after-freeze policy, links + acknowledgments. Operator pastes into GitHub's release form when publishing.
+
+### Test count
+
+**434 unit tests passing** (414 Stage 8e baseline + 20 MCP server unit tests), **33 integration tests deselected by default** (25 provider integration unchanged + 8 NEW MCP integration), 0 failures. Run wall ~0.56s. Word counts: SPEC.md 678 words; RELEASE-v1.0.0.md 1396 words.
+
+### Spec gaps surfaced
+
+ZERO. Stage 9 was a freeze + composition validation session; no new spec content was added beyond the v1.0 marker. The §3.10 placeholder `$schema` URL was the only outstanding spec item gating freeze, and it was resolved via the canonical URL choice.
+
+### `docs/open-questions.md` updates
+
+- **Q1 (`$schema` canonical URL)** flipped to **Resolved** — canonical URL captured, `schemas/uacp.json` artifact-creation commit hash recorded, per-minor-tag URL strategy documented.
+- **Q2 (trademark policy)** remains Open as a post-freeze deliverable.
+- **Q3 (operator-side public release)** remains Open as the operator-action item the external resolution of the canonical `$schema` URL depends on.
+
+### Hard rules honored
+
+Spec freeze happened BEFORE MCP composition (Commit 1 + 2 = spec freeze; Commit 3-4 = MCP work; Commit 5 = docs; Commit 6 = memory). v1.0.0 tag is the freeze marker (created locally on the memory commit, not pushed). Canonical `$schema` URL chosen and propagated. Did not push the repo or tag. MCP server wrapper is additive (no refactoring of existing prototype code beyond the auth method imports the server pulls in to wire credentials).
+
+### UACP commit chain on top of `df4c2ef` (Stage 8e memory tip)
+
+- `827e823 feat(spec): canonical $schema URL + schemas/uacp.json artifact`
+- `638579d feat(spec): v1.0 freeze — finalize SPEC.md, README, GOVERNANCE, per-stage status`
+- `125da94 feat(prototype): MCP server wrapper exposing UACP operations as MCP tools`
+- `c01bbcb test(prototype): MCP composition validation against MCP Python SDK`
+- `0a3f4be docs: MCP composition section in prototype README + GitHub release notes draft`
+
+This memory commit will land on top of `0a3f4be`. The `v1.0.0` git tag is created locally pointing at the memory commit.
+
+### Operator action items
+
+(1) push the local commits to `origin/main`; (2) push the `v1.0.0` tag (`git push origin v1.0.0`); (3) make the GitHub repo public if not already (the canonical `$schema` URL doesn't resolve externally until then); (4) create the GitHub release using the drafted notes from `RELEASE-v1.0.0.md`.
+
+### UACP commit plan
+
+5 prototype/spec commits already landed. Single memory commit — `memory: UACP Stage 9 — v1.0 spec freeze + MCP composition validation`. Then `git tag -a v1.0.0 -m "..."`. Operator pushes manually.
