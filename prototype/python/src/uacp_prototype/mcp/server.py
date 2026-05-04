@@ -47,6 +47,7 @@ from ..dispatch.client import (
     DispatchError,
     DispatchSuccess,
 )
+from ..dispatch.transport import select_transport_for_artifact
 from ..spec.loader import load
 from ..spec.models import Operation, UACPArtifact
 
@@ -224,10 +225,12 @@ def build_dispatch_client_default(artifact: UACPArtifact) -> DispatchClient:
     extra = auth.model_extra or {}
 
     auth_method, resolver = _build_auth_for_method(method_name, extra, artifact)
+    transport = select_transport_for_artifact(artifact)
     return DispatchClient(
         artifact,
         auth_method=auth_method,
         credential_resolver=resolver,
+        transport=transport,
     )
 
 

@@ -270,3 +270,116 @@ def test_scrapling_transport_instantiates_when_extras_installed() -> None:
     t = ScraplingTransport()
     assert t.name == "stealth"
     t.close()
+
+
+# ---------------------------------------------------------------------------
+# Selection logic — select_transport_for_artifact
+# ---------------------------------------------------------------------------
+
+
+from uacp_prototype.dispatch.transport import select_transport_for_artifact
+
+
+def test_selection_no_field_no_session_cookie_returns_httpx() -> None:
+    """The default path: artifact without dispatch.transport AND
+    auth.method != session_cookie → HttpxTransport."""
+    artifact = load(EXAMPLES_DIR / "github" / "repos-get.uacp")
+    t = select_transport_for_artifact(artifact)
+    assert isinstance(t, HttpxTransport)
+    t.close()
+
+
+def test_selection_explicit_default_returns_httpx(tmp_path: Path) -> None:
+    src = EXAMPLES_DIR / "notebooklm" / "list-notebooks.uacp"
+    raw = json.loads(src.read_text())
+    raw["dispatch"]["transport"] = "default"
+    out = tmp_path / "list-default.uacp"
+    out.write_text(json.dumps(raw))
+    artifact = load(out)
+    t = select_transport_for_artifact(artifact)
+    assert isinstance(t, HttpxTransport)
+    t.close()
+
+
+def test_selection_explicit_stealth_no_extras_falls_back_with_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Per §4.10 graceful-degradation: when 'stealth' is requested but
+    the extras aren't installed, the selector logs a warning and
+    returns HttpxTransport rather than refusing to dispatch."""
+    if is_scrapling_available():
+        pytest.skip("stealth extras installed; skipping fallback-path test")
+    src = EXAMPLES_DIR / "notebooklm" / "list-notebooks.uacp"
+    artifact = load(src)
+    # The example already declares dispatch.transport=stealth as of v1.1.
+    extra = artifact.dispatch.model_extra or {}
+    assert extra.get("transport") == "stealth"
+
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="uacp.dispatch.transport"):
+        t = select_transport_for_artifact(artifact)
+    assert isinstance(t, HttpxTransport)
+    assert any(
+        "stealth" in r.message and "extras" in r.message for r in caplog.records
+    )
+    t.close()
+
+
+def test_selection_unknown_transport_falls_back_with_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Unknown transport identifier (including x-namespaced) → fall
+    back to HttpxTransport with a warning per §4.10."""
+    src = EXAMPLES_DIR / "github" / "repos-get.uacp"
+    raw = json.loads(src.read_text())
+    raw["dispatch"]["transport"] = "x-experimental-backend"
+    out = tmp_path / "experimental.uacp"
+    out.write_text(json.dumps(raw))
+    artifact = load(out)
+
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="uacp.dispatch.transport"):
+        t = select_transport_for_artifact(artifact)
+    assert isinstance(t, HttpxTransport)
+    assert any("x-experimental-backend" in r.message for r in caplog.records)
+    t.close()
+
+
+def test_selection_session_cookie_no_extras_returns_httpx() -> None:
+    """When session_cookie auth is declared but the stealth extras
+    aren't installed, the auth-method affinity quietly degrades to
+    HttpxTransport. The user-visible signal is that the transport is
+    httpx; provider-side anti-bot measures will likely cause
+    DispatchErrors visible at runtime, which surface the gap."""
+    if is_scrapling_available():
+        pytest.skip("stealth extras installed; skipping no-extras-path test")
+    # Use the chat-message NotebookLM example which lives at the same
+    # transport=stealth posture; the field is honored explicitly above.
+    # Here we test the auth-method affinity path by stripping the
+    # transport field.
+    src = EXAMPLES_DIR / "notebooklm" / "list-notebooks.uacp"
+    raw = json.loads(src.read_text())
+    raw["dispatch"].pop("transport", None)
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".uacp", delete=False) as f:
+        f.write(json.dumps(raw))
+        path = Path(f.name)
+    artifact = load(path)
+    assert artifact.authentication.method == "session_cookie"
+    t = select_transport_for_artifact(artifact)
+    assert isinstance(t, HttpxTransport)  # graceful degradation
+    t.close()
+
+
+def test_notebooklm_examples_declare_stealth_transport() -> None:
+    """The NotebookLM examples ship with dispatch.transport='stealth'
+    as of v1.1, advertising that they target a fingerprint-defended
+    Provider. Fall-back to httpx is graceful per §4.10 when the
+    extras aren't installed."""
+    for name in ("list-notebooks.uacp", "send-chat-message.uacp"):
+        artifact = load(EXAMPLES_DIR / "notebooklm" / name)
+        extra = artifact.dispatch.model_extra or {}
+        assert extra.get("transport") == "stealth", f"{name} should declare transport=stealth"

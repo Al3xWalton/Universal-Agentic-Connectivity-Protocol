@@ -194,7 +194,15 @@ Setup is unique to `session_cookie`:
    UACP_NOTEBOOKLM_TEST_MESSAGE="hello from uacp integration"
    ```
 
-4. **Run the integration tests**:
+4. **(Optional, recommended for NotebookLM)** **Install the `stealth` extras** to enable Scrapling-backed anti-bot resilience per §4.10 (added in `v1.1`):
+   ```bash
+   uv sync --extra stealth
+   ```
+   Without the extras, dispatch falls back to the default `httpx` transport with a logged warning — Google's NotebookLM endpoints often return 403 / 429 / Cloudflare challenge pages to plain `httpx` requests but accept the same request from a browser-fingerprint-matching client. Anti-bot bypass is best-effort; when it works, dispatches succeed transparently; when it doesn't, the dispatch surfaces the canonical error per §4.6 the same as any other failure. Per §2.10 the ToS-violation-risk acknowledgment + §6.6 audit logging apply regardless of which transport carries the bytes — Scrapling does not relax those obligations.
+
+   The NotebookLM example artifacts at `examples/notebooklm/list-notebooks.uacp` and `examples/notebooklm/send-chat-message.uacp` carry `dispatch.transport: "stealth"` to declare the affinity explicitly. Implementations that don't recognize the `stealth` value gracefully fall back to their default backend per §4.10.
+
+5. **Run the integration tests**:
    ```bash
    uv run pytest tests/providers/test_notebooklm.py -m integration
    ```
@@ -273,6 +281,17 @@ The default dispatch factory pulls credentials from these locations:
 | `session_cookie` | env var `UACP_<PROVIDER>_STORAGE_STATE` (path to a Playwright `storage_state.json` file) |
 
 `<PROVIDER>` is the artifact's `name` field uppercased with `-` and `.` replaced by `_`. For ad-hoc dispatch via Claude Code, set the env vars in the shell that launches Claude Code (or in your `.claude/mcp.json` `env` block).
+
+### Transport selection (v1.1)
+
+Per §4.10 (added in `v1.1`), the dispatch client supports pluggable HTTP transport backends. The MCP server's default factory invokes `select_transport_for_artifact` per artifact, which applies this decision tree:
+
+1. If the artifact's `dispatch.transport` field is set to `"default"` → `HttpxTransport`.
+2. If set to `"stealth"` and the optional `stealth` extras are installed (`uv sync --extra stealth`) → `ScraplingTransport` (Camoufox-driven, anti-bot fingerprinting). Falls back to `HttpxTransport` with a logged warning when the extras aren't installed.
+3. If `dispatch.transport` is unset and the artifact uses `session_cookie` auth, the same auth-method-affinity rule applies — stealth when available, httpx otherwise.
+4. Otherwise → `HttpxTransport`.
+
+The `examples/notebooklm/*.uacp` files declare `dispatch.transport: "stealth"` to advertise their affinity. Anti-bot bypass is best-effort; the §4.1 — §4.9 dispatch contract is preserved across both backends per §4.10 conformance — retries, rate limits, audit logging, and canonical error mapping all apply identically.
 
 ### Verifying composition
 

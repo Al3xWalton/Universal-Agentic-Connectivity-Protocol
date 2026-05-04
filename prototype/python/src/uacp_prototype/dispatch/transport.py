@@ -332,10 +332,81 @@ def is_scrapling_available() -> bool:
         return False
 
 
+def select_transport_for_artifact(artifact: Any) -> Transport:
+    """Per §4.10 selection mechanism.
+
+    Decision tree:
+
+      1. If ``dispatch.transport`` is declared on the artifact, honor
+         it. Recognized values:
+
+           - ``"default"`` → ``HttpxTransport``.
+           - ``"stealth"`` → ``ScraplingTransport`` if the optional
+             ``stealth`` extras are installed; falls back to
+             ``HttpxTransport`` with a logged warning when not, per
+             §4.10's "fall back with a warning, not refuse" rule.
+           - Any ``x-`` namespaced identifier → falls back to
+             ``HttpxTransport`` with a logged warning (the prototype
+             registers no ``x-`` transports).
+           - Unknown identifier → falls back to ``HttpxTransport`` with
+             a logged warning.
+
+      2. Otherwise apply auth-method affinity. ``session_cookie`` auth
+         (per §2.10) defaults to ``ScraplingTransport`` when the
+         stealth extras are installed because providers reachable
+         through session_cookie typically have browser-fingerprint
+         defenses; falls back to ``HttpxTransport`` when not.
+
+      3. Otherwise return ``HttpxTransport``.
+
+    The graceful-degradation posture is the §4.10 conformance rule —
+    implementations don't refuse to dispatch when a requested
+    transport isn't available, they fall back with a warning so the
+    user can decide whether to install extras or update the artifact.
+    """
+    import logging
+    log = logging.getLogger("uacp.dispatch.transport")
+
+    dispatch_extra = getattr(artifact.dispatch, "model_extra", None) or {}
+    requested = dispatch_extra.get("transport")
+    auth_method = getattr(artifact.authentication, "method", None)
+
+    if requested is not None:
+        if requested == "default":
+            return HttpxTransport()
+        if requested == "stealth":
+            if is_scrapling_available():
+                return ScraplingTransport()
+            log.warning(
+                "dispatch.transport='stealth' requested but the optional 'stealth' "
+                "extras are not installed; falling back to HttpxTransport. "
+                "Install with `uv sync --extra stealth` to enable."
+            )
+            return HttpxTransport()
+        # Unknown / x-namespaced — graceful fallback per §4.10.
+        log.warning(
+            "dispatch.transport=%r is not a registered backend identifier in this "
+            "implementation; falling back to HttpxTransport.",
+            requested,
+        )
+        return HttpxTransport()
+
+    # Auth-method affinity: session_cookie → stealth when available.
+    if auth_method == "session_cookie" and is_scrapling_available():
+        log.info(
+            "session_cookie auth detected and 'stealth' extras installed; "
+            "selecting ScraplingTransport per §4.10 auth-method affinity."
+        )
+        return ScraplingTransport()
+
+    return HttpxTransport()
+
+
 __all__ = [
     "HttpxTransport",
     "ScraplingNotInstalledError",
     "ScraplingTransport",
     "Transport",
     "is_scrapling_available",
+    "select_transport_for_artifact",
 ]

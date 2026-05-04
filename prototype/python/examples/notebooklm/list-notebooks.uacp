@@ -25,7 +25,8 @@
       "Referer": "https://notebooklm.google.com/"
     },
     "default_timeout_ms": 30000,
-    "default_user_agent": "uacp-prototype/0.1"
+    "default_user_agent": "uacp-prototype/0.1",
+    "transport": "stealth"
   },
   "operations": [
     {
