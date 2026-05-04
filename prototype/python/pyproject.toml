@@ -24,6 +24,9 @@ dev = [
 stealth = [
     "scrapling>=0.3",
 ]
+capture = [
+    "playwright>=1.45",
+]
 
 [project.scripts]
 uacp = "uacp_prototype.cli:main"
@@ -41,8 +44,9 @@ markers = [
     "integration: tests that hit real provider APIs and require operator-supplied OAuth credentials (skipped by default; run with `pytest -m integration`)",
     "mcp_integration: tests that spawn the MCP server as a subprocess and connect via the MCP Python SDK; require the mcp package installed but no real provider credentials (skipped by default; run with `pytest -m mcp_integration`)",
     "scrapling: tests that exercise the optional ScraplingTransport from the `stealth` extras; skipped when the extras are not installed (run with `pytest -m scrapling` after `uv sync --extra stealth`).",
+    "capture_integration: tests that launch a real browser via the optional `capture` extras and record traffic against a live target (e.g. httpbin.org); skipped by default (run with `pytest -m capture_integration` after `uv sync --extra capture && uv run playwright install chromium`).",
 ]
-addopts = "-ra --strict-markers -m 'not integration and not mcp_integration and not scrapling'"
+addopts = "-ra --strict-markers -m 'not integration and not mcp_integration and not scrapling and not capture_integration'"
 filterwarnings = [
     "error",
     "ignore::DeprecationWarning",
