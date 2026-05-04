@@ -54,7 +54,7 @@ A major change to UACP — adding a new stage, introducing a new `Authentication
 
 UACP is a specification, not a running service, so most "security issues" in this repository are wording concerns: a requirement that, if interpreted literally, would lead an implementer to build something insecure. File those as ordinary issues.
 
-If you have identified a security concern that you believe should be triaged privately before public disclosure, contact the maintainers using the address listed in the [Code of Conduct](./CODE_OF_CONDUCT.md).
+If you have identified a security concern that you believe should be triaged privately before public disclosure, contact the maintainer using the address listed in the [Code of Conduct](./CODE_OF_CONDUCT.md).
 
 ## Licensing
 

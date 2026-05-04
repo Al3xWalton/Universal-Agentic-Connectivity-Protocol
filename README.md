@@ -24,7 +24,7 @@ The design principles that follow from this commitment — layered architecture,
 
 ## Governance
 
-UACP `v1.x` evolves under the stewardship of the protocol's authoring organization. `v2` and beyond evolve through a public RFC process. Outside contributors are welcome — see [`CONTRIBUTING.md`](./CONTRIBUTING.md) — and the [`GOVERNANCE.md`](./GOVERNANCE.md) document records the current stewardship and trademark posture.
+UACP is a personal project maintained by Alexander Walton. `v1.x` evolves under the stewardship of its maintainer; `v2` and beyond will follow a public RFC process if and when the protocol's user base justifies one. Outside contributors are welcome — see [`CONTRIBUTING.md`](./CONTRIBUTING.md) — and [`GOVERNANCE.md`](./GOVERNANCE.md) records the current stewardship and trademark posture.
 
 ## License
 
