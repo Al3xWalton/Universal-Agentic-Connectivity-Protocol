@@ -77,17 +77,172 @@ def _has_more_offset(body: Any, pag: OffsetPagination, *, page_size: int, curren
     return page_size >= declared_limit
 
 
-def _parse_link_header(header: str) -> dict[str, str]:
-    """Parse RFC 8288 Link header into rel → URI mapping."""
+def _parse_link_header(
+    header: str | list[str], *, base_url: str | None = None
+) -> dict[str, str]:
+    """Parse an RFC 8288 Link header (or list of Link headers) into a
+    rel → URI mapping.
+
+    Handles the spec's edge cases:
+
+    - **Single Link header with multiple comma-separated entries**:
+      ``<url1>; rel="next", <url2>; rel="last"`` — the typical shape.
+    - **Multiple Link headers**: HTTP allows the same field name to
+      appear multiple times; the wire-form joins them with commas.
+      When the input is a list[str], entries are joined with `, ` and
+      then parsed as a single string.
+    - **Comma inside angle-bracketed URL**: URLs MUST be inside
+      ``<...>`` per RFC 8288 §3, and the parser respects the brackets
+      when splitting entries — a comma between ``<`` and ``>`` is
+      part of the URL, not a separator.
+    - **Multiple link parameters per entry**: ``<url>; rel="next";
+      title="Next page"`` — the parser walks all parameters, stopping
+      on the first ``rel`` (which is what RFC 8288 §3.3 semantically
+      requires; multiple rels for one link are rare).
+    - **Multiple rel values in one rel parameter**: ``rel="next prev"``
+      — RFC 8288 §3.3 permits space-separated relations; we register
+      the URI under each relation.
+    - **Quoted vs unquoted rel values**: ``rel=next`` and ``rel="next"``
+      both valid; the parser strips quotes when present.
+    - **Case-insensitive rel matching**: RFC 8288 §3.3 says relation
+      types are case-insensitive; we lowercase the rel value on
+      parse so consumers can do dict["next"] without case games.
+    - **Relative URIs**: RFC 8288 §3.4 permits relative-reference URIs;
+      when ``base_url`` is supplied, relative URIs are resolved
+      against it per RFC 3986.
+    - **Whitespace**: leading/trailing whitespace around entries and
+      parameters is tolerated.
+
+    Returns a dict mapping lowercase relation type to URI (resolved
+    against ``base_url`` if relative).
+    """
+    if isinstance(header, list):
+        if not header:
+            return {}
+        header = ", ".join(header)
+    if not header:
+        return {}
+
     out: dict[str, str] = {}
-    # Naive but adequate parser for typical inputs:
-    # `<url>; rel="next", <url2>; rel="prev"`
-    parts = re.split(r",\s*(?=<)", header)
-    for part in parts:
-        m = re.match(r'\s*<([^>]+)>\s*;\s*rel="?([^",]+)"?', part)
-        if m:
-            out[m.group(2)] = m.group(1)
+    for entry in _split_link_entries(header):
+        uri, params = _parse_link_entry(entry)
+        if uri is None:
+            continue
+        # Resolve relative URI against base_url per RFC 8288 §3.4
+        if base_url is not None and not _is_absolute_uri(uri):
+            from urllib.parse import urljoin
+
+            uri = urljoin(base_url, uri)
+        # rel parameter — case-insensitive per RFC 8288 §3.3
+        rel = params.get("rel")
+        if rel is None:
+            continue
+        # Multiple relations may be space-separated per §3.3
+        for rel_token in rel.split():
+            out[rel_token.lower()] = uri
     return out
+
+
+def _split_link_entries(header: str) -> list[str]:
+    """Split a Link header value into individual <uri>; params entries.
+
+    A comma is the entry separator UNLESS it appears inside an angle-
+    bracketed URI per RFC 8288 §3 or inside a quoted parameter value.
+    """
+    entries: list[str] = []
+    current: list[str] = []
+    in_brackets = False
+    in_quotes = False
+    i = 0
+    while i < len(header):
+        ch = header[i]
+        if ch == "<" and not in_quotes:
+            in_brackets = True
+            current.append(ch)
+        elif ch == ">" and not in_quotes:
+            in_brackets = False
+            current.append(ch)
+        elif ch == '"' and not in_brackets:
+            in_quotes = not in_quotes
+            current.append(ch)
+        elif ch == "," and not in_brackets and not in_quotes:
+            entry = "".join(current).strip()
+            if entry:
+                entries.append(entry)
+            current = []
+        else:
+            current.append(ch)
+        i += 1
+    last = "".join(current).strip()
+    if last:
+        entries.append(last)
+    return entries
+
+
+def _parse_link_entry(entry: str) -> tuple[str | None, dict[str, str]]:
+    """Parse a single Link header entry into (uri, params).
+
+    Format per RFC 8288 §3: ``<uri>; param1=value1; param2="value 2"``.
+    Returns (None, {}) when the entry doesn't start with ``<...>``.
+    """
+    entry = entry.strip()
+    if not entry.startswith("<"):
+        return None, {}
+    # Extract <URI>
+    close = entry.find(">")
+    if close < 0:
+        return None, {}
+    uri = entry[1:close]
+    rest = entry[close + 1 :].lstrip()
+
+    params: dict[str, str] = {}
+    # Walk semicolon-separated params, respecting quoted values.
+    while rest.startswith(";"):
+        rest = rest[1:].lstrip()
+        # name=value parse
+        eq = _find_unquoted_char(rest, "=")
+        if eq < 0:
+            break
+        name = rest[:eq].strip().lower()
+        rest = rest[eq + 1 :].lstrip()
+        if rest.startswith('"'):
+            # quoted value
+            end_quote = rest.find('"', 1)
+            if end_quote < 0:
+                value = rest[1:]
+                rest = ""
+            else:
+                value = rest[1:end_quote]
+                rest = rest[end_quote + 1 :].lstrip()
+        else:
+            # unquoted: until ; or end
+            sep = _find_unquoted_char(rest, ";")
+            if sep < 0:
+                value = rest.strip()
+                rest = ""
+            else:
+                value = rest[:sep].strip()
+                rest = rest[sep:]
+        params[name] = value
+    return uri, params
+
+
+def _find_unquoted_char(s: str, ch: str) -> int:
+    in_quotes = False
+    for i, c in enumerate(s):
+        if c == '"':
+            in_quotes = not in_quotes
+        elif c == ch and not in_quotes:
+            return i
+    return -1
+
+
+def _is_absolute_uri(uri: str) -> bool:
+    """RFC 3986: absolute URIs have a scheme. Heuristic: presence of
+    ``://`` early in the string. The §3.4 link_header pattern only
+    cares about HTTP(S) URIs in practice, so this heuristic is enough.
+    """
+    return "://" in uri[:20]
 
 
 def dispatch_paginated(
@@ -191,7 +346,17 @@ def dispatch_paginated(
             link_header = result.headers.get("link") or result.headers.get("Link")
             if not link_header:
                 return
-            rels = _parse_link_header(link_header)
+            # Resolve relative URIs against the request URL that
+            # produced this response. The dispatcher's request-URL
+            # construction is opaque from this layer; we use the
+            # dispatch base_url + (link_header_next if we already
+            # advanced) as the resolution base. RFC 8288 §3.4 permits
+            # relative-reference URIs in Link headers, and RFC 3986
+            # urljoin handles both relative and absolute uniformly.
+            resolution_base = link_header_next or client.artifact.dispatch.base_url
+            rels = _parse_link_header(link_header, base_url=resolution_base)
+            # rel matching is case-insensitive per RFC 8288 §3.3; the
+            # parser already lowercased.
             next_url = rels.get("next")
             if not next_url:
                 return
