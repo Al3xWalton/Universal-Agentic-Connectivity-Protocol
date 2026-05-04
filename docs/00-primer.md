@@ -6,7 +6,7 @@ The Universal Agentic Connectivity Protocol (UACP) is a wire format and runtime 
 
 ## Status
 
-`v1.0.0` is the first stable release of UACP, frozen on 2026-05-04. Subsequent `v1.x` releases are non-breaking per [Stage 7 — Versioning](./07-versioning.md) §7.2; `v2` will follow the public RFC process described in §7.6 if and when accumulated demand justifies it.
+`v1.1.0` is the current release of UACP. `v1.0.0` was frozen on 2026-05-04; `v1.1.0` (2026-05-05) is the first non-breaking minor release, adding §3.12 (session-capture schema source) and §4.10 (pluggable transport backends). Per [Stage 7 — Versioning](./07-versioning.md) §7.2, every `v1.0`-valid artifact continues to validate against `v1.1`. Subsequent `v1.x` releases continue the non-breaking-evolution posture; `v2` will follow the public RFC process described in §7.6 if and when accumulated demand justifies it.
 
 UACP is developed in public from day one. A reference implementation in Python lives in this repository under `prototype/python/`; the production reference implementation will live in the AVA monorepo at `backend/services/connections-broker/`.
 
@@ -88,8 +88,8 @@ The UACP specification is composed of the documents under `docs/`, indexed by st
 | 0 | [`00-primer.md`](./00-primer.md) | **Stable** (this document) | Abstract, terminology, scope, prior-art comparison, document conventions. |
 | 1 | [`01-principles.md`](./01-principles.md) | **Stable** | Foundational design principles that constrain every later stage. |
 | 2 | [`02-authentication.md`](./02-authentication.md) | **Stable** | Authentication subsystem: ten registered methods, extension mechanism, credential storage rules, session_cookie ToS gate (§2.10). |
-| 3 | [`03-schema.md`](./03-schema.md) | **Stable** | Schema layer: `.uacp` artifact shape, JSON Schema profile, validation rules, body-predicate failure detection (§3.3), body-format discriminator (§3.3), pagination patterns (§3.4). |
-| 4 | [`04-dispatch.md`](./04-dispatch.md) | **Stable** | Dispatch runtime: invocation surface, parameter binding, transport rules, error normalization. |
+| 3 | [`03-schema.md`](./03-schema.md) | **Stable** | Schema layer: `.uacp` artifact shape, JSON Schema profile, validation rules, body-predicate failure detection (§3.3), body-format discriminator (§3.3), pagination patterns (§3.4), session-capture schema source (§3.12, added in `v1.1`). |
+| 4 | [`04-dispatch.md`](./04-dispatch.md) | **Stable** | Dispatch runtime: invocation surface, parameter binding, transport rules, error normalization, pluggable transport backends (§4.10, added in `v1.1`). |
 | 5 | [`05-lifecycle.md`](./05-lifecycle.md) | **Stable** | Connection lifecycle: creation, refresh, revocation, observability. |
 | 6 | [`06-security.md`](./06-security.md) | **Stable** | Security model: secret storage, scope enforcement, threat model. |
 | 7 | [`07-versioning.md`](./07-versioning.md) | **Stable** | Versioning policy and the public RFC process for `v2` and beyond. |
