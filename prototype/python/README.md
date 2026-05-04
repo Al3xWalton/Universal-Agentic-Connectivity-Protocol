@@ -205,6 +205,83 @@ Captured storage state is sensitive — treat it like a password. Per §6.7, rec
 
 The two `.uacp` artifacts at `examples/notebooklm/` are produced through the §3.8 LLM-inference path (`source.type: inferred`, `source.model: anthropic/claude-haiku-4.5`, `source.reviewed_at` populated) — the operator described the integration in natural language, the LLM proposed an operation shape, the operator reviewed and confirmed it via `connections.ingest_nl.confirm_and_persist(approved=True)`. The `tests/unit/test_end_to_end_notebooklm_mock.py` suite demonstrates the full inference → review → confirm → load → dispatch loop with a recorded LLM response.
 
+## MCP composition
+
+UACP composes with the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) per Principle 4. The prototype ships an MCP server at `src/uacp_prototype/mcp/server.py` that walks a directory of `.uacp` files and exposes each operation as an MCP tool. Any MCP-aware client (Claude Code, Claude Desktop, Cursor, anything speaking MCP) can connect over stdio and call UACP-defined operations as tools.
+
+### Starting the server
+
+```bash
+uv run python -m uacp_prototype.mcp --uacp-dir examples/
+```
+
+Against the prototype's `examples/` tree the server advertises **10 tools** — one per operation across the five validated providers:
+
+| Tool name | UACP source | Auth method |
+|---|---|---|
+| `google_gmail_users_messages_send` | `examples/google/gmail-send.uacp` | `oauth2_authorization_code` |
+| `google_calendar_events_list` | `examples/google/google-calendar-list.uacp` | `oauth2_authorization_code` |
+| `slack_chat_postmessage` | `examples/slack/chat-postMessage.uacp` | `x-oauth2-workspace` |
+| `slack_conversations_list` | `examples/slack/conversations-list.uacp` | `x-oauth2-workspace` |
+| `aws_s3_getobject` | `examples/aws/s3-getobject.uacp` | `aws_sigv4` |
+| `aws_s3_listobjectsv2` | `examples/aws/s3-listobjectsv2.uacp` | `aws_sigv4` |
+| `github_repos_get` | `examples/github/repos-get.uacp` | `api_key_header` |
+| `github_repos_list_for_user` | `examples/github/repos-list-for-user.uacp` | `api_key_header` |
+| `notebooklm_notebooklm_list_notebooks` | `examples/notebooklm/list-notebooks.uacp` | `session_cookie` |
+| `notebooklm_notebooklm_send_chat_message` | `examples/notebooklm/send-chat-message.uacp` | `session_cookie` |
+
+### How the operation→tool mapping works
+
+For each `.uacp` file under the configured directory:
+
+- **Provider name** comes from the artifact's parent directory (`examples/google/...` → provider `google`); when an artifact lives directly at the configured root, the artifact's `name` field or filename stem is used instead.
+- **Tool name** is `<provider>_<operation_id>`, with dots and slashes normalized to underscores (per the OpenAI / Anthropic / Google `^[a-zA-Z0-9_-]{1,128}$` tool-name validation regex). The 128-char cap is enforced by truncation; collisions on truncated names are an artifact-naming concern.
+- **Tool input schema** is derived from the operation's request shape per §3.2: `path_params` mirrors the operation's `path_parameters` schema, `query` mirrors `query_parameters`, `body` mirrors the request body's inline `schema`, plus an optional `extra_headers` map. Keyword argument names match `DispatchClient.dispatch`.
+- **Tool execution** dispatches through the existing UACP runtime (`auth/`, `dispatch/`, `lifecycle/`, `security/`). The same security and dispatch invariants the spec enforces for direct UACP consumers apply transparently to MCP-side callers.
+
+### Connecting from Claude Code
+
+Add the MCP server to your project-level `.claude/mcp.json` (or your user-level config). The server expects to be invoked from a directory where the prototype is installed (`uv run` activates the right environment automatically):
+
+```json
+{
+  "mcpServers": {
+    "uacp": {
+      "command": "uv",
+      "args": [
+        "--directory", "/path/to/UACP/prototype/python",
+        "run", "python", "-m", "uacp_prototype.mcp",
+        "--uacp-dir", "examples"
+      ]
+    }
+  }
+}
+```
+
+When Claude Code starts, it connects over stdio, calls `tools/list`, and the 10 UACP-defined tools become available alongside any other MCP servers configured. Claude can then call `github_repos_get`, `slack_conversations_list`, `aws_s3_listobjectsv2`, etc., the same way it calls native MCP tools.
+
+### Credential resolution
+
+The default dispatch factory pulls credentials from these locations:
+
+| Auth method | Source |
+|---|---|
+| `oauth2_authorization_code` | env var `UACP_<PROVIDER>_ACCESS_TOKEN` (run an OAuth flow first, e.g. via the integration test harness) |
+| `x-oauth2-workspace` | env var `UACP_<PROVIDER>_BOT_TOKEN` |
+| `api_key_header` / `api_key_query` | env var `UACP_<PROVIDER>_API_KEY` |
+| `aws_sigv4` | env vars `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` (+ optional `AWS_SESSION_TOKEN`) |
+| `session_cookie` | env var `UACP_<PROVIDER>_STORAGE_STATE` (path to a Playwright `storage_state.json` file) |
+
+`<PROVIDER>` is the artifact's `name` field uppercased with `-` and `.` replaced by `_`. For ad-hoc dispatch via Claude Code, set the env vars in the shell that launches Claude Code (or in your `.claude/mcp.json` `env` block).
+
+### Verifying composition
+
+The MCP-composition test suite at `tests/integration/test_mcp_composition.py` (marked `@pytest.mark.mcp_integration`, skipped by default) pairs the prototype's `UACPServer` with the MCP SDK's `ClientSession` over in-process memory streams and asserts: tool count + names, tool-schema derivation, tool execution returning `DispatchSuccess`, argument pass-through, canonical error propagation per §4.6, credential-resolution-failure surfacing, and multi-provider routing. Run with:
+
+```bash
+uv run pytest tests/integration/test_mcp_composition.py -m mcp_integration
+```
+
 ## Spec correspondence
 
 Every module's docstring names the spec sections it implements. Module-level test files under `tests/unit/` exercise the spec's MUSTs at the unit level. The end-to-end mock test under `tests/unit/test_end_to_end_mock.py` ties the layers together.
