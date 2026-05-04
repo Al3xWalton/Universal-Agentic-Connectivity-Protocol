@@ -32,6 +32,11 @@ from ..spec.models import (
     UACPArtifact,
 )
 from ..auth.base import AuthMethod
+from .envelope import (
+    evaluate_failure_predicate,
+    extract_failure_details,
+    select_response_entry,
+)
 
 log = logging.getLogger("uacp.dispatch")
 
@@ -466,8 +471,15 @@ class DispatchClient:
             # Update rate-limit advisory state from response headers
             self._update_rate_limit_state(response, now=time.time())
 
-            # 2xx success
+            # 2xx success — but check failure_predicate per §3.3 + §4.6
+            # before declaring success. Providers that wrap logical
+            # failures in {ok: false, ...} on a 200 status (Slack,
+            # GraphQL-shaped APIs, several enterprise APIs) declare the
+            # predicate; without one, this falls through to success.
             if 200 <= response.status_code < 300:
+                envelope_result = self._check_failure_predicate(op, response)
+                if envelope_result is not None:
+                    return envelope_result
                 return self._build_success(response)
 
             # 429 rate limit (§4.5)
@@ -608,6 +620,99 @@ class DispatchClient:
             headers=dict(response.headers),
             body=body,
         )
+
+    def _check_failure_predicate(
+        self, op: Operation, response: httpx.Response
+    ) -> DispatchError | None:
+        """Per §3.3 + §4.6 body-predicate failure detection.
+
+        Looks up the response entry matching the response's status. If
+        the entry declares ``failure_predicate``, evaluates it against
+        the parsed JSON body. On match, returns a DispatchError carrying
+        the canonical error shape. On no-match (or no predicate
+        declared), returns None and the caller proceeds with the
+        2xx-success path.
+        """
+        entry = select_response_entry(op.response, response.status_code)
+        if entry is None or entry.failure_predicate is None:
+            return None
+        try:
+            body = response.json()
+        except (ValueError, httpx.DecodingError):
+            return None  # body isn't JSON → no predicate to evaluate
+
+        if not evaluate_failure_predicate(entry.failure_predicate, body):
+            return None
+
+        provider_code, provider_message = extract_failure_details(
+            entry.failure_predicate, body
+        )
+
+        # Code mapping when a provider error string is extracted: the
+        # spec leaves the per-provider mapping as implementation
+        # refinement (per §4.6 "MAY refine code from envelope context").
+        # For Stage 8b the prototype maps a small set of common Slack-
+        # shaped error strings; unknown codes default to upstream_error
+        # (logical failure that the runtime can't categorize more
+        # specifically).
+        code = self._map_envelope_failure_code(provider_code)
+        message = provider_message or (
+            f"upstream returned logical failure"
+            + (f" ({provider_code})" if provider_code else "")
+        )
+
+        details: dict[str, Any] = {}
+        if isinstance(body, dict):
+            details = {k: v for k, v in body.items()}
+
+        return DispatchError(
+            status=response.status_code,
+            code=code,
+            message=message,
+            details=details,
+            raw=body,
+        )
+
+    def _map_envelope_failure_code(self, provider_code: str | None) -> str:
+        """Map a provider-specific envelope error string to a canonical
+        code. Unknown / absent strings default to upstream_error.
+
+        The mapping handles Slack's well-known errors (the Stage 8b
+        target) plus a small set of universal patterns that recur
+        across providers using the {ok: false} envelope shape.
+        """
+        if not provider_code:
+            return "upstream_error"
+        if provider_code in {
+            "not_authed",
+            "invalid_auth",
+            "token_revoked",
+            "token_expired",
+            "no_permission",
+        }:
+            return "auth_expired"
+        if provider_code in {"missing_scope", "account_inactive", "ekm_access_denied"}:
+            return "forbidden"
+        if provider_code in {
+            "channel_not_found",
+            "user_not_found",
+            "message_not_found",
+            "file_not_found",
+        }:
+            return "not_found"
+        if provider_code in {"rate_limited", "ratelimited"}:
+            return "rate_limited"
+        if provider_code in {
+            "invalid_arguments",
+            "invalid_arg_name",
+            "invalid_array_arg",
+            "invalid_charset",
+            "invalid_form_data",
+            "invalid_post_type",
+            "missing_post_type",
+        }:
+            return "bad_input"
+        return "upstream_error"
 
     def _build_error(self, op: Operation, response: httpx.Response) -> DispatchError:
         code = _status_to_canonical_code(response.status_code)

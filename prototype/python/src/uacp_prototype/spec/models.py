@@ -117,11 +117,41 @@ class RequestShape(StrictModel):
         raise ValueError("body must be 'none', an inline object, or a $ref object")
 
 
+class FailurePredicate(StrictModel):
+    """Per §3.3 failure predicate — body-shape signal that distinguishes a
+    logical failure from a logical success on a 2xx response.
+
+    Permits providers whose API surface wraps both success and failure in
+    the same HTTP status (typically 200 with {ok: false, error: "..."}).
+    The predicate's `path` is a JSONPath expression in the same minimal
+    subset as §3.4 (`$.field` and `$.field.subfield`); `equals` is the
+    JSON literal that, when matching the resolved value, indicates
+    failure. Optional `code_path` extracts a provider-specific error
+    string from the body for inclusion in the canonical error's
+    `details` per §4.6.
+    """
+
+    path: str
+    equals: Any
+    code_path: str | None = None
+    message_path: str | None = None
+
+    @field_validator("path", "code_path", "message_path")
+    @classmethod
+    def _jsonpath_subset(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        if not v.startswith("$."):
+            raise ValueError(f"failure_predicate path must start with $.; got {v!r}")
+        return v
+
+
 class ResponseEntry(StrictModel):
     description: str
     body: str | dict[str, Any] | None = None
     headers: dict[str, Any] | None = None
     streaming: bool = False
+    failure_predicate: FailurePredicate | None = None
 
     @field_validator("body")
     @classmethod
@@ -367,6 +397,7 @@ __all__ = [
     "CurlSource",
     "DispatchConfig",
     "EncryptedSecret",
+    "FailurePredicate",
     "InferredSource",
     "LinkHeaderPagination",
     "NoPagination",
