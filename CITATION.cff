@@ -1,0 +1,34 @@
+cff-version: 1.2.0
+message: "If you use UACP in research or products, please cite it as below."
+title: "UACP — Universal Agentic Connectivity Protocol"
+authors:
+  - family-names: Walton
+    given-names: Alexander
+    alias: Al3xWalton
+version: 1.1.0
+date-released: 2026-05-05
+license: Apache-2.0
+url: "https://github.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol"
+repository-code: "https://github.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol"
+type: standard
+keywords:
+  - protocol
+  - ai-agents
+  - connectivity
+  - mcp
+  - oauth
+  - api
+  - agents
+  - automation
+abstract: >-
+  UACP is a wire format and runtime contract for describing how an AI
+  agent authenticates to and dispatches operations against any HTTPS
+  service. UACP is a peer to the Model Context Protocol (MCP): MCP
+  standardizes how an agent calls a tool, UACP standardizes how the
+  tool, once called, reaches the external service it connects to. The
+  two protocols compose. UACP v1.1.0 specifies ten registered
+  authentication methods, four schema sources (OpenAPI ingestion,
+  curl-paste, LLM inference, browser-captured sessions), four
+  pagination patterns, a Connection lifecycle, a security model with
+  secret-store registry and audit logging, and a versioning policy
+  with a public RFC path to v2.
