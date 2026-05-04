@@ -259,6 +259,32 @@ def _validate_inferred_provenance(artifact: UACPArtifact) -> None:
             )
 
 
+def _validate_capture_provenance(artifact: UACPArtifact) -> None:
+    """§3.12 (added in v1.1) — capture-sourced operations carry the
+    same mandatory-user-review gate as §3.8 inferred operations:
+    persistence is rejected when ``reviewed_at`` is missing or empty.
+    The pydantic CaptureSource model enforces non-empty values via
+    field validators; this pass surfaces a uniform spec-validation
+    error mirroring the §3.8 path."""
+    for idx, op in enumerate(artifact.operations):
+        if op.source is None:
+            continue
+        if op.source.type != "capture":
+            continue
+        missing = [
+            f
+            for f in ("captured_at", "user_intent", "capture_ref", "reviewed_at")
+            if not getattr(op.source, f, "")
+        ]
+        if missing:
+            raise SpecValidationError(
+                f"operations[{idx}].id={op.id!r}: capture source provenance "
+                f"missing fields {missing} (§3.12 / §3.10). Capture-sourced "
+                f"operations MUST NOT be persisted without explicit user "
+                f"review (reviewed_at)."
+            )
+
+
 def validate_artifact(artifact: UACPArtifact, raw: dict[str, Any]) -> None:
     """Run §3.10 validation on a parsed artifact + its raw dict form.
 
@@ -269,6 +295,7 @@ def validate_artifact(artifact: UACPArtifact, raw: dict[str, Any]) -> None:
     _validate_no_embedded_credentials(raw)
     _validate_local_refs(raw)
     _validate_inferred_provenance(artifact)
+    _validate_capture_provenance(artifact)
 
 
 __all__ = ["SpecValidationError", "validate_artifact"]

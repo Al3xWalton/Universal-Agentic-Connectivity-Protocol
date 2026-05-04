@@ -221,7 +221,7 @@ Pagination = CursorPagination | OffsetPagination | LinkHeaderPagination | NoPagi
 
 
 # ---------------------------------------------------------------------------
-# Source (provenance) — §3.6 / §3.7 / §3.8
+# Source (provenance) — §3.6 / §3.7 / §3.8 / §3.12
 # ---------------------------------------------------------------------------
 
 
@@ -252,7 +252,43 @@ class InferredSource(StrictModel):
         return v
 
 
-SourceEntry = OpenAPISource | CurlSource | InferredSource
+class CaptureSource(StrictModel):
+    """§3.12 (added in v1.1) — capture-sourced operation provenance.
+
+    Fields per the §3.12 conformance: ``captured_at`` is when the
+    browser session was recorded; ``user_intent`` is the operator's
+    natural-language description; ``capture_ref`` is the
+    ``secret://`` URI pointing at the encrypted-at-rest HAR
+    artifact; ``reviewed_at`` is the user-approval signature
+    populated by ``confirm_and_persist`` per the mandatory-user-
+    review rule (parallel to §3.8).
+    """
+
+    type: Literal["capture"]
+    captured_at: str
+    user_intent: str
+    capture_ref: str
+    confidence: Literal["low", "medium", "high"] | None = None
+    reviewed_at: str
+
+    @field_validator("captured_at", "user_intent", "capture_ref", "reviewed_at")
+    @classmethod
+    def _nonempty(cls, v: str) -> str:
+        if not v:
+            raise ValueError("capture source field must be non-empty")
+        return v
+
+    @field_validator("capture_ref")
+    @classmethod
+    def _capture_ref_is_secret_uri(cls, v: str) -> str:
+        if not v.startswith("secret://"):
+            raise ValueError(
+                "capture source.capture_ref MUST be a secret:// URI per §2.7"
+            )
+        return v
+
+
+SourceEntry = OpenAPISource | CurlSource | InferredSource | CaptureSource
 
 
 # ---------------------------------------------------------------------------
