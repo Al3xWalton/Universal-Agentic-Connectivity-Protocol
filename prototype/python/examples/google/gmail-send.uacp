@@ -1,0 +1,111 @@
+{
+  "$schema": "https://uacp.spec/v1/schema.json",
+  "name": "google-gmail",
+  "version": "0.1.0",
+  "description": "Gmail send_email — sends an RFC 822 message via the Gmail API v1.",
+  "authentication": {
+    "method": "oauth2_authorization_code",
+    "authorization_endpoint": "https://accounts.google.com/o/oauth2/v2/auth",
+    "token_endpoint": "https://oauth2.googleapis.com/token",
+    "client_id": "REPLACED_AT_RUNTIME",
+    "client_secret_ref": "secret://local-keyring/google#client_secret",
+    "scopes": ["https://www.googleapis.com/auth/gmail.send"],
+    "redirect_uri": "http://localhost:8765/oauth/callback",
+    "code_challenge_method": "S256"
+  },
+  "dispatch": {
+    "base_url": "https://gmail.googleapis.com",
+    "default_headers": {
+      "Accept": "application/json"
+    },
+    "default_timeout_ms": 30000,
+    "default_user_agent": "uacp-prototype/0.1"
+  },
+  "definitions": {
+    "Message": {
+      "type": "object",
+      "description": "Gmail message resource. Per the Gmail API, the `raw` field carries an RFC 2822 message base64url-encoded.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Server-assigned message id."
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "raw": {
+          "type": "string",
+          "format": "byte",
+          "description": "Base64url-encoded RFC 2822 message. Required on send."
+        },
+        "labelIds": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      }
+    },
+    "ErrorEnvelope": {
+      "type": "object",
+      "description": "Google API standard error envelope.",
+      "properties": {
+        "error": {
+          "type": "object",
+          "properties": {
+            "code": {"type": "integer"},
+            "message": {"type": "string"},
+            "status": {"type": "string"}
+          }
+        }
+      }
+    }
+  },
+  "operations": [
+    {
+      "id": "gmail_users_messages_send",
+      "summary": "Send an email message.",
+      "description": "Sends the specified RFC 2822 message to the recipients in its To, Cc, and Bcc headers. The `userId` path parameter is typically the literal `me` for the authenticated user.",
+      "tags": ["email", "send"],
+      "idempotency": "not_idempotent",
+      "request": {
+        "method": "POST",
+        "path": "/gmail/v1/users/{userId}/messages/send",
+        "path_parameters": {
+          "type": "object",
+          "required": ["userId"],
+          "properties": {
+            "userId": {
+              "type": "string",
+              "description": "The user's email address. The special value `me` indicates the authenticated user.",
+              "default": "me"
+            }
+          }
+        },
+        "body": {
+          "media_type": "application/json",
+          "schema": {"$ref": "#/definitions/Message"}
+        }
+      },
+      "response": {
+        "200": {
+          "description": "Message sent. Returns the server-assigned message id and threadId.",
+          "body": {
+            "media_type": "application/json",
+            "schema": {"$ref": "#/definitions/Message"}
+          }
+        },
+        "default": {
+          "description": "Error response. Google API standard envelope.",
+          "body": {
+            "media_type": "application/json",
+            "schema": {"$ref": "#/definitions/ErrorEnvelope"}
+          }
+        }
+      },
+      "source": {
+        "type": "openapi",
+        "url": "https://www.googleapis.com/discovery/v1/apis/gmail/v1/rest",
+        "ingested_at": "2026-05-04T03:00:00Z"
+      }
+    }
+  ]
+}

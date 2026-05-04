@@ -36,7 +36,7 @@ testpaths = ["tests"]
 markers = [
     "integration: tests that hit real provider APIs and require operator-supplied OAuth credentials (skipped by default; run with `pytest -m integration`)",
 ]
-addopts = "-ra --strict-markers"
+addopts = "-ra --strict-markers -m 'not integration'"
 filterwarnings = [
     "error",
     "ignore::DeprecationWarning",

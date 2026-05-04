@@ -1,0 +1,156 @@
+{
+  "$schema": "https://uacp.spec/v1/schema.json",
+  "name": "google-calendar",
+  "version": "0.1.0",
+  "description": "Google Calendar events.list — lists events on a calendar. Cursor-paginated via pageToken.",
+  "authentication": {
+    "method": "oauth2_authorization_code",
+    "authorization_endpoint": "https://accounts.google.com/o/oauth2/v2/auth",
+    "token_endpoint": "https://oauth2.googleapis.com/token",
+    "client_id": "REPLACED_AT_RUNTIME",
+    "client_secret_ref": "secret://local-keyring/google#client_secret",
+    "scopes": ["https://www.googleapis.com/auth/calendar.readonly"],
+    "redirect_uri": "http://localhost:8765/oauth/callback",
+    "code_challenge_method": "S256"
+  },
+  "dispatch": {
+    "base_url": "https://www.googleapis.com",
+    "default_headers": {
+      "Accept": "application/json"
+    },
+    "default_timeout_ms": 30000,
+    "default_user_agent": "uacp-prototype/0.1"
+  },
+  "definitions": {
+    "Event": {
+      "type": "object",
+      "properties": {
+        "id": {"type": "string"},
+        "summary": {"type": "string"},
+        "description": {"type": "string"},
+        "start": {
+          "type": "object",
+          "properties": {
+            "dateTime": {"type": "string", "format": "date-time"},
+            "date": {"type": "string", "format": "date"},
+            "timeZone": {"type": "string"}
+          }
+        },
+        "end": {
+          "type": "object",
+          "properties": {
+            "dateTime": {"type": "string", "format": "date-time"},
+            "date": {"type": "string", "format": "date"},
+            "timeZone": {"type": "string"}
+          }
+        }
+      }
+    },
+    "Events": {
+      "type": "object",
+      "properties": {
+        "kind": {"type": "string", "const": "calendar#events"},
+        "items": {
+          "type": "array",
+          "items": {"$ref": "#/definitions/Event"}
+        },
+        "nextPageToken": {"type": "string"}
+      }
+    },
+    "ErrorEnvelope": {
+      "type": "object",
+      "properties": {
+        "error": {
+          "type": "object",
+          "properties": {
+            "code": {"type": "integer"},
+            "message": {"type": "string"},
+            "status": {"type": "string"}
+          }
+        }
+      }
+    }
+  },
+  "operations": [
+    {
+      "id": "calendar_events_list",
+      "summary": "List events on a calendar, newest first by default.",
+      "description": "Returns the events on the named calendar. Pages via pageToken. The special calendar id `primary` refers to the authenticated user's main calendar.",
+      "tags": ["calendar", "events", "read"],
+      "idempotency": "idempotent",
+      "request": {
+        "method": "GET",
+        "path": "/calendar/v3/calendars/{calendarId}/events",
+        "path_parameters": {
+          "type": "object",
+          "required": ["calendarId"],
+          "properties": {
+            "calendarId": {
+              "type": "string",
+              "description": "Calendar identifier. `primary` for the authenticated user's main calendar."
+            }
+          }
+        },
+        "query_parameters": {
+          "type": "object",
+          "properties": {
+            "maxResults": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2500,
+              "default": 250,
+              "description": "Maximum events per page."
+            },
+            "pageToken": {
+              "type": "string",
+              "description": "Opaque cursor returned by a prior call's nextPageToken."
+            },
+            "timeMin": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Lower bound on event start time (RFC 3339)."
+            },
+            "timeMax": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "singleEvents": {
+              "type": "boolean",
+              "default": true
+            },
+            "orderBy": {
+              "type": "string",
+              "enum": ["startTime", "updated"]
+            }
+          }
+        }
+      },
+      "response": {
+        "200": {
+          "description": "A page of events.",
+          "body": {
+            "media_type": "application/json",
+            "schema": {"$ref": "#/definitions/Events"}
+          }
+        },
+        "default": {
+          "description": "Error response. Google API standard envelope.",
+          "body": {
+            "media_type": "application/json",
+            "schema": {"$ref": "#/definitions/ErrorEnvelope"}
+          }
+        }
+      },
+      "pagination": {
+        "pattern": "cursor",
+        "request_cursor_parameter": "pageToken",
+        "response_cursor_path": "$.nextPageToken"
+      },
+      "source": {
+        "type": "openapi",
+        "url": "https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest",
+        "ingested_at": "2026-05-04T03:00:00Z"
+      }
+    }
+  ]
+}
