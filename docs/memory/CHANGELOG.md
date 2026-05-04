@@ -380,3 +380,59 @@ Slack returns HTTP 200 regardless of logical outcome and discriminates via `{ok:
 **Hard rules honored**: did not change Google's existing prototype code (only `spec/models.py` ResponseEntry got a new optional field, and `dispatch/client.py` got the envelope hook in the 2xx branch — those are additive and the 188 Stage 8a tests still pass unchanged); did not relitigate Stage 0-7 spec content beyond the §3.3 + §4.6 amendment which was filed as `fix(spec):`; Slack `.uacp` files validate through the unmodified spec loader (modulo the §3.3 amendment); did not push either repo. Stage 8a's `prototype/python/` work remains intact.
 
 **UACP commit plan**: 4 prototype/spec commits already landed. Single memory commit — `memory: UACP Stage 8b — Slack OAuth prototype + envelope-failure handling`. Operator pushes manually.
+
+---
+
+## 2026-05-04 — UACP Stage 8c — AWS S3 / SigV4 prototype + body-format dispatching
+
+Third per-provider session. Validates UACP against AWS S3, a provider whose authentication shape is structurally unlike OAuth (per-request signing, no flow, triple credential refs) and whose response shape diverges from JSON (binary content for GetObject, XML for ListObjectsV2). Lands the second `fix(spec):` of the prototype-validation arc — adding the `format` discriminator to §3.3 to handle non-JSON response bodies.
+
+**Spec repo commit chain on top of `8de529f` (Stage 8b memory tip)**:
+
+- `c1596d4 feat(prototype): implement AWS SigV4 signing` — full SigV4 from scratch using only stdlib `hashlib` + `hmac`. No boto3 / botocore. Canonical request, string-to-sign, signing-key derivation, Authorization header injection. Verified byte-for-byte against AWS-published IAM ListUsers worked example: kSigning hex matches `c4afb1cc5771d871...86da6ed3c154a4b9`; canonical request matches; string-to-sign matches; final signature `5d672d79c15b13162d9279b0855cfba6789a8edb4c82c400e06b5924a6f2b5d7` matches. Edge cases: empty body uses SHA-256 of empty string (NOT UNSIGNED-PAYLOAD; that's only for streaming uploads — flagged as a Stage 9 consideration); query-string multi-value sort by (name, value); header whitespace trimming + sequential-whitespace collapse; STS session token in `x-amz-security-token` participating in signed headers; S3 single-encoding vs non-S3 double-encoding for URL paths; default-port stripping in Host (`:443` for HTTPS); `x-amz-content-sha256` REQUIRED-and-signed only for S3 (matching AWS's IAM test vector exactly which omits it for non-S3 services). **23 tests**.
+- `441f44d feat(prototype): handle XML and binary response bodies at dispatch` — `dispatch/body_format.py` with `decode_response_body` (routes by format / media_type) and `xml_to_dict` (stdlib `xml.etree.ElementTree`); `spec/models.py` ResponseEntry validator extended to accept the `format` field; `dispatch/client.py` `_build_success` extended to call format-aware decoder when response entry declares format. The dispatcher stashes the in-flight operation on `_current_operation` so `_build_success` can route through the operation's declared format / failure_predicate. **21 tests**.
+- `5d72616 fix(spec): §3.3 — body format discriminator (json / xml / binary / text)` — additive amendment. §3.3 gains a "Body format" subsection between the response-entry shape and "Canonical error envelopes". Defines four permitted format values; XML→dict conversion rules documented for cross-implementation convergence; pagination interaction (response_cursor_path traverses the post-conversion dict); binary and text formats omit schema. Non-breaking per Principle 6 / §7.2.
+- `29bbc39 feat(prototype): S3 GetObject + ListObjectsV2 .uacp + integration tests` — `examples/aws/s3-getobject.uacp` (GET /{bucket}/{key} with format=binary response, path-style addressing) and `examples/aws/s3-listobjectsv2.uacp` (GET /{bucket}?list-type=2&... with format=xml response and cursor pagination via `$.ListBucketResult.NextContinuationToken`). 5 mock-based end-to-end tests + 5 @pytest.mark.integration tests. README updated with AWS S3 setup section including security-by-default IAM policy guidance.
+
+**The body-format gap — second clean spec finding of the prototype-validation arc**:
+
+§3.3 modelled response bodies as JSON-only. S3 returns binary content from GetObject and XML from ListObjectsV2; many enterprise APIs return XML, some return text/CSV, image-generation endpoints return binary. Without spec backing, every implementation would diverge. Path A again — additive amendment introducing an optional `format` field on response body objects. Permitted values: `json` (default), `xml`, `binary`, `text`. The XML→dict conversion rules are documented (namespace stripping, `@`-prefixed attributes, repeated children → lists, leaf text → bare string, `#text` for mixed content) so two Conforming Implementations agree on the canonical shape. The same JSONPath subset from §3.4 traverses the post-conversion dict so cursor pagination over XML works without new pagination machinery. Path B (Slack-style provider-specific workaround) was rejected because S3's pattern (binary downloads, XML metadata) recurs across many providers. Path C (out-of-schema Content-Type-only handling at dispatch) was rejected because the schema layer should still describe the body — even if briefly — for §3.4 cursor extraction to work.
+
+**The two "spec gaps" the brief flagged that turned out NOT to exist**:
+
+- §2.7 "single secret_ref per method" — Investigated; doesn't exist. §2.5.1 already declares triple-credential refs (`access_key_ref`, `secret_key_ref`, optional `session_token_ref`) as separate per-method fields. §2.7 only specifies the URI shape; per-method auth blocks have always been free to declare multiple `_ref`-suffixed fields. No spec change needed.
+- §2.5.1 "AWS published spec exactly" punt — Investigated; appropriate as written. AWS's spec covers per-service variants (S3 vs non-S3 path encoding; `x-amz-content-sha256` required-only-for-S3); the prototype matches the test vectors. No spec change needed.
+
+**The streaming-upload UNSIGNED-PAYLOAD case** is flagged as a Stage 9 consideration if §4.7 streaming-request semantics are added later. v1's S3 use cases (GetObject + ListObjectsV2) don't need it; PutObject would, but PutObject is out of scope for this session.
+
+**Aggregate test count**: **290 unit tests passing**, **15 integration tests deselected by default**, 0 failures, 0 errors. Run wall ~0.40s. Module-by-module:
+
+- test_smoke: 1 (unchanged)
+- test_spec_loader: 35 (unchanged)
+- test_oauth2_authcode: 18 (unchanged)
+- test_dispatch_client: 38 (unchanged)
+- test_pagination: 16 (unchanged)
+- test_lifecycle_state: 26 (unchanged)
+- test_refresh: 11 (unchanged)
+- test_secrets: 23 (unchanged)
+- test_ingest_openapi: 15 (unchanged)
+- test_end_to_end_mock: 5 (Google, unchanged)
+- test_oauth2_workspace: 23 (Stage 8b, unchanged)
+- test_envelope: 25 (Stage 8b, unchanged)
+- test_end_to_end_slack_mock: 5 (Stage 8b, unchanged)
+- test_aws_sigv4: 23 (NEW Stage 8c)
+- test_xml_response: 21 (NEW Stage 8c)
+- test_end_to_end_aws_mock: 5 (NEW Stage 8c)
+- providers/test_google: 5 (deselected)
+- providers/test_slack: 5 (deselected)
+- providers/test_aws: 5 (NEW Stage 8c, deselected)
+
+**Six `.uacp` files validating** through `spec.loader.load()`: gmail-send, google-calendar-list, chat-postMessage, conversations-list, s3-getobject, s3-listobjectsv2.
+
+**Spec gaps surfaced**: ONE (body format). Closed via path A — additive amendment to §3.3. The two §2.7 / §2.5.1 gaps the brief flagged as candidates were investigated and confirmed non-existent.
+
+**No new entries to `docs/open-questions.md`** — all gaps either closed in spec or flagged as Stage 9 design considerations within existing tracking.
+
+**Hard rules honored**: did not depend on boto3 or botocore (SigV4 from scratch); did not change Google or Slack code (SigV4 is purely additive in `auth/aws_sigv4.py` replacing the stub); .uacp files validate cleanly through `spec.loader.load()` after the §3.3 format-field amendment; did not push the repo. AWS's published SigV4 test suite anchored the implementation correctness — the IAM ListUsers worked example is the load-bearing test vector.
+
+**UACP commit plan**: 4 prototype/spec commits already landed. Single memory commit — `memory: UACP Stage 8c — AWS S3 / SigV4 prototype`. Operator pushes manually.
