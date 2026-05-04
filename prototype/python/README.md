@@ -301,6 +301,86 @@ The MCP-composition test suite at `tests/integration/test_mcp_composition.py` (m
 uv run pytest tests/integration/test_mcp_composition.py -m mcp_integration
 ```
 
+## Session capture (v1.1)
+
+Per §3.12 (added in `v1.1`), UACP supports browser-instrumented session capture as a schema source: the user opens the target service in a real browser, demonstrates the actions they want UACP to learn, and the prototype records the resulting HTTP traffic for downstream operation synthesis (Stage 11.2). Stage 11.1 ships the recording side end-to-end — the synthesis pass that turns captured traffic into `.uacp` operations is the next session.
+
+### Privacy and ToS
+
+Captures contain everything the user's logged-in browser sees during the session — cookies, response bodies, private documents, emails, anything visible in the DevTools Network panel. The prototype encrypts captures at rest under §6.3 envelope encryption (AES-256-GCM, per-capture data-encryption-key wrapped by the user's master KEK at `~/.uacp/master.key`) and never transmits the captured artifact off-device. The user is responsible for the actions they demonstrate. Per §2.10's `session_cookie` discussion, capture-driven discovery against grey-zone providers (services without a public API) carries the same ToS-violation-risk posture; replaying the captured traffic later through `session_cookie` auth requires the operator's explicit `tos_acknowledged: true` ack at the spec-loader level.
+
+### Installing Playwright
+
+The capture engine uses Playwright as its default backend. Playwright is in the optional `capture` extras group:
+
+```bash
+uv sync --extra capture
+uv run playwright install chromium
+```
+
+### Running a capture
+
+```bash
+uv run python -m uacp_prototype.cli capture-session \
+  --initial-url https://example.com/ \
+  --output secret://local-keyring/example-capture
+```
+
+Optional flags:
+
+- `--browser playwright|scrapling` — default `playwright`. The `scrapling` value transparently delegates to Playwright in v1.1.x because Scrapling 0.3's API is dispatch-only (no long-session traffic-event hooks); the Stage 11.0 dispatch transport (ScraplingTransport) still uses Scrapling's stealth posture for replay. Stage 11.2+ may revisit when Scrapling exposes a session-capable browser API.
+- `--provider <name>` — optional provider hint that lands in audit-log payloads + the deterministic capture-id seed.
+
+The flow:
+
+1. The CLI prints `Opening <url> in a browser. Log in if needed, then demonstrate the actions you want UACP to learn. When you're done, return to this terminal and press Enter to stop recording.`
+2. A non-headless browser window opens at the initial URL. The user logs in, navigates, performs the operations they want UACP to learn.
+3. The CLI prints `Captured N request(s) so far...` every 5 seconds.
+4. The user returns to the terminal and presses Enter (or closes the browser window — the recorder detects the disconnect and finalizes cleanly).
+5. The CLI prints `Captured M request(s) over T seconds. Persisting...` followed by `Capture stored at secret://local-keyring/example-capture. Use it as the source.capture_ref of a session_capture-sourced operation in a .uacp file (per §3.12).`
+
+### What the captured artifact contains
+
+The on-disk artifact is an AES-256-GCM-encrypted blob at `~/.uacp/secrets/example-capture.enc`. After decryption (which happens transparently when Stage 11.2's synthesis pass loads it via `secret://local-keyring/example-capture`), the artifact carries:
+
+- **HAR 1.2-format entries** — every `request` / `response` pair Playwright observed during the session, including method, URL, headers, body, status, response body, and timing data. Suitable for inspection by standard HAR tools after explicit decryption.
+- **`storage_state`** — the post-session cookies + localStorage payload Playwright produces via `context.storage_state()`. This is the session-credential surface that Stage 11.2 routes into a §2.10 `session_cookie` connection's `storage_state_ref`.
+- **Metadata** — user-agent string, viewport size, the recorder's checkpoint cadence, the operator-provided `--provider` hint.
+
+The artifact's `capture_id` is a deterministic SHA-256 hash of `(initial_url + captured_at + provider)` truncated to 16 hex chars per §3.12, so the same capture session is never accidentally stored twice. The user-supplied `--output` URI is honored verbatim — the storage path is whatever name the operator chose, regardless of the deterministic `capture_id`.
+
+### Resilience
+
+Every 30 seconds the recorder checkpoints its in-progress capture to `~/.uacp/captures/in-progress/<id>.har.tmp` (mode 0600, plaintext, deleted on clean stop). On mid-session crash, browser disconnect, terminal close, or `Ctrl-C`:
+
+- The signal handler sets the recorder's disconnect event so the await loop exits.
+- `recorder.stop()` runs in the cleanup path and finalizes whatever was captured up to that point into an encrypted artifact via the same `store_capture` path.
+- If the process dies before the cleanup path runs, the temp checkpoint file at `~/.uacp/captures/in-progress/<id>.har.tmp` is recoverable via `recover_in_progress(capture_id)` from `uacp_prototype.capture.recorder`. This is a manual recovery surface in v1.1; an `uacp resume-capture` CLI command lands in a future minor.
+
+### Audit trail
+
+Per §6.6, the recorder emits structured INFO-level events at:
+
+- **`capture started`** — `id=<capture_id> backend=<playwright|scrapling> initial_url=<url>`.
+- **`capture stopped`** — `id=<capture_id> requests=<count> duration_ms=<elapsed>`.
+- **`capture stored`** — `ref=<secret://...> id=<capture_id> requests=<count> duration_ms=<elapsed> host=<initial_host>`.
+
+Audit payloads NEVER carry captured cookies, `Authorization` header values, or `storage_state` contents. The audit trail is an operator-visible signal; the encrypted blob is the data store.
+
+### Forward reference: Stage 11.2 (operation synthesis)
+
+The captured artifact at `secret://local-keyring/example-capture` is the input to Stage 11.2's operation-synthesis pass. That session will load the artifact, cluster the captured requests into candidate operations per §3.12's clustering rules (same endpoint + method → operation; URL pattern → path parameters; per-frequency → required vs optional parameters), refine the inference via the §3.8 LLM-inference path, and produce a `.uacp` file with `source.type: "capture"` operations referencing this `capture_ref`. Stage 11.1 stops at "the captured artifact is stored cleanly with a stable reference."
+
+### Verifying capture end-to-end
+
+The capture-integration suite at `tests/integration/test_capture_session_live.py` (marked `@pytest.mark.capture_integration`, skipped by default) launches a real Playwright-driven Chromium against `httpbin.org` and asserts the recorder lands at least one entry that survives the encrypted-storage round-trip. Run with:
+
+```bash
+uv sync --extra capture
+uv run playwright install chromium
+uv run pytest tests/integration/test_capture_session_live.py -m capture_integration
+```
+
 ## Spec correspondence
 
 Every module's docstring names the spec sections it implements. Module-level test files under `tests/unit/` exercise the spec's MUSTs at the unit level. The end-to-end mock test under `tests/unit/test_end_to_end_mock.py` ties the layers together.

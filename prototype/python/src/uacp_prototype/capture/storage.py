@@ -68,18 +68,19 @@ def store_capture(
     artifact: CaptureArtifact,
     *,
     secret_store: str = "local-keyring",
+    storage_id: str | None = None,
     base_dir: Path | None = None,
 ) -> StoredCapture:
     """Persist ``artifact`` to ``secret_store`` under §6.3 envelope
     encryption. Returns the ``secret://<store>/<id>`` reference plus
     diagnostic metadata.
 
-    The id is the artifact's ``capture_id`` (deterministic per §3.12).
-    Storing the same capture twice yields the same id; the second
-    write overwrites the first transparently. The brief's "the same
-    capture isn't accidentally stored twice" property is satisfied by
-    id determinism — there's no allocation step that could produce
-    drift.
+    By default the id is ``capture-<artifact.capture_id>`` —
+    deterministic per §3.12, so storing the same capture twice yields
+    the same id and the second write overwrites the first
+    transparently. Callers (e.g., the ``capture-session`` CLI) MAY
+    pass ``storage_id`` to honor an operator-chosen storage name
+    verbatim; the resulting ref is ``secret://<store>/<storage_id>``.
 
     ``base_dir`` overrides the keyring base for tests. Production
     callers pass ``secret_store="local-keyring"`` and let the store
@@ -98,6 +99,9 @@ def store_capture(
     if not artifact.capture_id:
         raise CaptureError("store_capture: artifact has no capture_id")
 
+    if storage_id is None:
+        storage_id = f"capture-{artifact.capture_id}"
+
     store: LocalKeyringStore
     if base_dir is not None:
         store = LocalKeyringStore(base_dir=base_dir)
@@ -105,7 +109,7 @@ def store_capture(
         store = LocalKeyringStore.default()
 
     payload = json.dumps(artifact.to_internal_json(), separators=(",", ":")).encode("utf-8")
-    uri = SecretURI(store=secret_store, id=f"capture-{artifact.capture_id}")
+    uri = SecretURI(store=secret_store, id=storage_id)
     store.put(uri, payload)
 
     duration_ms = 0.0
@@ -116,7 +120,7 @@ def store_capture(
         )
         duration_ms = max(0.0, (last - first.timestamp()) * 1000.0)
 
-    ref = f"secret://{secret_store}/capture-{artifact.capture_id}"
+    ref = f"secret://{secret_store}/{storage_id}"
     _emit_audit_capture_stored(
         ref=ref,
         capture_id=artifact.capture_id,
