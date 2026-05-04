@@ -494,3 +494,58 @@ Fourth per-provider session. The shortest of the prototype-validation arc: `api_
 **Hard rules honored**: did not change Google, Slack, or AWS code; did not relitigate Stage 0-7 spec content beyond the §3.4 link_header amendment which was filed as `fix(spec):`; GitHub `.uacp` files validate cleanly through `spec.loader.load()`; did not push the repo; link-header pagination code is in `dispatch/pagination.py` (the generic location) not a GitHub-specific module — Atlassian, GitLab, and many other REST APIs that use the same RFC 8288 pattern get the same parser without changes.
 
 **UACP commit plan**: 4 prototype/spec commits already landed. Single memory commit — `memory: UACP Stage 8d — GitHub PAT prototype + link-header pagination`. Operator pushes manually.
+
+## 2026-05-04 — Stage 8e — UACP repo
+
+- Final per-provider Stage 8 session. Closes the §2.1 auth registry by adding `session_cookie` (the tenth method) for grey-zone provider integrations, and closes §3.8 by implementing the LLM-inferred schema authoring path with the mandatory user-review gate. Validates both against Google NotebookLM, which has no public API and no published OpenAPI.
+- **§2.10 Session-cookie authentication** added as a new subsection. Shape: `method: session_cookie`, `tos_acknowledged: true` (literal boolean — string `"true"`, integer `1`, missing field, all rejected at the spec-loader level via Pydantic `model_validator(mode="after")`), `storage_state_ref` (Playwright `storage_state.json` URI), `cookie_names` (whitelist), optional `csrf_token` block (`header_name`, optional `cookie_name` OR `refresh_url` + `extraction_path` + `extraction_format`). Conformance: MUST surface ToS-violation-risk warning to the user before enabling; MUST emit audit log INFO with `risk: tos_violation_potential` per §6.6 on every dispatch; SHOULD recapture every 30 days per §6.7 staleness guidance. §2.1 registry table goes from 9 → 10 entries; §2.9 conformance summary adds the session_cookie row at MAY level + the "MUST NOT load .uacp files using session_cookie without tos_acknowledged: true" rule.
+- **§6.1 threat-model** gains a Session-cookie credential theft entry (mitigation: file-mode 0600, no-git-commit, recapture cadence). **§6.7 trust-model** gains a Session-cookie connections subsection (30-day staleness warning; ToS-warning surface MUST through user-facing channel; production deployments route §6.6 audit emit through their pipeline).
+- **`auth/session_cookie.py`** implemented from scratch using stdlib + httpx. Exposes `parse_storage_state` (Playwright shape), `filter_cookies_for_url` (RFC 6265 §5.1.3 domain matching + §5.1.4 path matching + secure-flag enforcement), `format_cookie_header`, `inject_cookies` (whitelist filtering with explicit `cookie_names`, raises if no cookies match), `refresh_csrf` (configurable extraction via JSONPath subset OR regex), `SessionCookieMethod` adapter implementing the `AuthMethod` protocol. Emits §2.10 ToS warning via stdlib logging (`uacp.auth.session_cookie`) on construction. 38 unit tests in `test_session_cookie.py`.
+- **`connections/ingest_nl.py`** replaces the stub. Exposes `InferenceDraft`, `InferredOperation`, `InferenceProvenance` dataclasses; `LLMCallable` Protocol for pluggable LLM (default `build_default_openrouter_callable` wrapping the OpenRouter API; mock-friendly for tests); `infer_from_description` returns a draft with provenance (`reviewed_at` empty); `confirm_and_persist` REQUIRES `approved=True` else raises `InferenceNotApprovedError`; `refine_inference` preserves operation ids per the §3.8 refinement rule; `SYSTEM_PROMPT` specifies UACP v1.x operation shape rigorously; `_parse_llm_response` strips markdown fences. 26 unit tests in `test_ingest_nl.py`.
+- **`dispatch/client.py`** extended with `_apply_auth(op, url, headers, body)` extracted so the §2.10 CSRF refresh-and-retry path re-applies auth correctly (initial implementation just `continue`d after refresh, but the headers dict still carried the original X-Same-Domain value). Dispatcher tracks `_csrf_refreshed_this_call` (one CSRF refresh per dispatch); on 401/403/419 attempts CSRF refresh against the configured `refresh_url`, stores the fresh token on `_csrf_state` so `credentials` resolves with it on the next apply, and continues the loop once. `_emit_session_cookie_audit_event` emits `INFO risk=tos_violation_potential` per §6.6.
+- **`spec/models.py`** registered set includes `session_cookie`; `_session_cookie_requires_tos_ack` validator enforces the literal-boolean rule. 4 new tests in `test_spec_loader.py` verifying each rejection path.
+- **NotebookLM `.uacp` files** at `examples/notebooklm/`: `list-notebooks.uacp` (POST `/_/NotebookLmRpcs/data/batchexecute?rpcids=wXbhsf` — RPC id reverse-engineered from `notebooklm-py`) and `send-chat-message.uacp` (rpcids=BfMzVf, `idempotency=not_idempotent`). Both carry `source.type=inferred`, `source.model=anthropic/claude-haiku-4.5`, `source.reviewed_at=2026-05-04T06:00:00Z`, the operator's natural-language description preserved verbatim, and `tos_acknowledged: true`. Cookie whitelist matches Google's session set: `SID`, `HSID`, `SSID`, `APISID`, `SAPISID`, `__Secure-1PSID`, `__Secure-3PSID`. CSRF block: `header_name: X-Same-Domain`, `cookie_name: _csrf_token`, `refresh_url`, `extraction_path: $.token`.
+- **CLI** gains `capture-storage-state --provider <name> --output FILE` subcommand (stubbed — prints the manual Playwright capture recipe and exits 1; Stage 9+ replaces with an interactive Playwright launch). README documents the operator setup including the 30-day staleness guidance from §6.7 and the inference-path provenance carried by both example artifacts.
+- **CURRENT.md** rewritten with the Stage 8e summary at the top; phase moves to "design phase complete; Stage 8 prototype validation **complete**; four spec amendments landed"; what's-next collapses to Stage 9 + Stage 10. Stage 8 status: complete.
+
+**Aggregate test count after Stage 8e**: **414 unit tests passing** (339 Stage 8d baseline + 38 session_cookie + 26 ingest_nl + 4 spec-loader session_cookie tests + 7 NotebookLM end-to-end mocks), **25 integration tests deselected by default** (5 Google + 5 Slack + 5 AWS + 5 GitHub + 5 NotebookLM new), 0 failures. Run wall ~0.46s.
+
+**Per-test-file breakdown after this session**:
+- test_oauth2_authcode: 18 (Stage 8a, unchanged)
+- test_dispatch_client: 38 (unchanged)
+- test_pagination: 16 (unchanged)
+- test_lifecycle_state: 26 (unchanged)
+- test_refresh: 11 (unchanged)
+- test_secrets: 23 (unchanged)
+- test_ingest_openapi: 15 (unchanged)
+- test_end_to_end_mock: 5 (Google, unchanged)
+- test_oauth2_workspace: 23 (Stage 8b, unchanged)
+- test_envelope: 25 (Stage 8b, unchanged)
+- test_end_to_end_slack_mock: 5 (Stage 8b, unchanged)
+- test_aws_sigv4: 23 (Stage 8c, unchanged)
+- test_xml_response: 21 (Stage 8c, unchanged)
+- test_end_to_end_aws_mock: 5 (Stage 8c, unchanged)
+- test_api_key: 17 (Stage 8d, unchanged)
+- test_pagination_link_header: 26 (Stage 8d, unchanged)
+- test_end_to_end_github_mock: 6 (Stage 8d, unchanged)
+- test_session_cookie: 38 (NEW Stage 8e)
+- test_ingest_nl: 26 (NEW Stage 8e)
+- test_spec_loader: +4 session_cookie tests (Stage 8e)
+- test_end_to_end_notebooklm_mock: 7 (NEW Stage 8e)
+- providers/test_google: 5 (deselected)
+- providers/test_slack: 5 (deselected)
+- providers/test_aws: 5 (deselected)
+- providers/test_github: 5 (deselected)
+- providers/test_notebooklm: 5 (NEW Stage 8e, deselected)
+
+**Ten `.uacp` files validating** through `spec.loader.load()`: gmail-send, google-calendar-list, chat-postMessage, conversations-list, s3-getobject, s3-listobjectsv2, repos-get, repos-list-for-user, list-notebooks, send-chat-message.
+
+**Spec gaps surfaced**: ONE (§2.10 session_cookie registration). Closed via path A — additive registration in §2.1 + new §2.10 subsection + §2.9 / §6.1 / §6.7 cross-references.
+
+**No new entries to `docs/open-questions.md`** — session_cookie shape now spec-anchored at §2.10; LLM-inference review-gate spec-anchored at §3.8; tos_acknowledged enforcement is at the spec-loader level not a gap.
+
+**Hard rules honored**: did not change Google, Slack, AWS, or GitHub code; `tos_acknowledged: true` enforced at the spec-loader level (Pydantic `model_validator`); §2.10 ToS-warning surfaces through user-facing channel (stdlib logging during prototype, audit pipeline in production); LLM-inference path REFUSES to persist without `approved=True`; Playwright capture flow intentionally stubbed (CLI subcommand prints the manual recipe; README documents both the stub and the manual capture path); NotebookLM `.uacp` files validate cleanly through the unmodified spec loader after the §2.10 amendment; did not push the repo.
+
+**UACP commit chain on top of `30f3ea4` (Stage 8d memory tip)**: `7d1067d feat(prototype): implement session_cookie authentication` → `7ca10b6 feat(prototype): implement LLM-inferred schema authoring (§3.8)` → `13ae3ee fix(spec): §2.10 — register session_cookie as v1.x auth method` → `162dfe1 feat(prototype): NotebookLM examples + session_cookie dispatch wiring`. Tip is `162dfe1` until this memory commit lands.
+
+**UACP commit plan**: 4 prototype/spec commits already landed. Single memory commit — `memory: UACP Stage 8e — session_cookie + LLM-inference + NotebookLM prototype`. Operator pushes manually.
