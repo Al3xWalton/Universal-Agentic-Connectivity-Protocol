@@ -774,3 +774,117 @@ Push the three prototype commits + this memory commit to `origin/main`. No tag �
 ### UACP commit plan
 
 3 prototype commits already landed. Single memory commit — `memory: UACP Stage 11.1 — browser capture infrastructure`. **No tag.** Operator pushes manually.
+
+## 2026-05-06 — Stage 11.2 — UACP repo
+
+Operation synthesis from browser-captured sessions shipped on top of v1.1.0. Three prototype commits + this memory commit. **No tag** — Stage 11.2 is implementation against the frozen v1.1.0 spec, not a spec amendment. Closes the §3.12 capture pipeline end-to-end: capture → analyze → synthesize → review → persist → validate.
+
+### Capture analyzer (capture/analyzer.py)
+
+- Deterministic clustering layer that runs before the LLM call. Variable-shape recognizers (UUID / integer / hex token ≥12 / slug-with-digits / email; pure-alpha tokens stay literal). Path-signature clustering replaces variable-shaped path segments with `:var` and groups by (method, signature). Path-parameter naming with priority: preceding-literal-segment singularized to `<thing>_id` at confidence 0.85; shape-derived `uuid_N` / `id_N` / `slug_N` / `email_N` / `hex_N` at 0.55; generic `param_N` at 0.30.
+- ParameterFrequency table for query parameters + non-auth request headers + JSON/form body keys with `seen / total` counts and `is_required` derived from 100% frequency. Body-shape ambiguity flag set when bodies overlap <80% (Jaccard).
+- Noise filtering: third-party hosts, image/font/CSS/JS Content-Type prefixes, favicon/manifest/service-worker/robots.txt, OPTIONS preflights. Filtered entries surface in `noise_requests` for diagnostics.
+- Auth-artifact extraction (`auth_artifacts` dict) — cookie names + Authorization-header counts + CSRF-header counts. NEVER carries raw token values.
+- Authorization / Cookie / X-API-Key request headers stripped from candidate operations' `request_headers` (auth plumbing belongs in §2.10 connection blocks).
+- Hard rule honored: clustering is deterministic; no LLM imports in the module; same artifact → same `to_summary()` output (verified). Speed target: <100ms per artifact (verified with 100-entry synthetic capture; ~10ms).
+
+### LLM synthesis pipeline (connections/ingest_capture.py)
+
+- Mirrors `ingest_nl.py`'s structure exactly — same LLMCallable Protocol, same draft + confirm + refine pattern, same 3-iteration cap on refinement, same persistence-requires-approval gate.
+- `synthesize_from_capture(capture_ref, user_intent, llm)` → `CaptureSynthesisDraft` with `source.type=capture` provenance (captured_at / user_intent / capture_ref / confidence; reviewed_at unset until confirmation).
+- LLM prompt embeds the AnalysisResult's structured summary; the LLM never sees raw HAR. System prompt has hard constraints: do not invent operations beyond the candidate list; do not include cookie / Authorization / API-key / token values; operation summaries describe agent actions, not API mechanics; output VALID JSON only.
+- Mechanical hallucination drop via `_filter_to_candidates`: LLM-output operations matched against the analyzer's `(method, path_template)` set; non-matches land in `draft.dropped_operations` for visibility but never in the persisted file. Even if the LLM ignores the system-prompt instruction, the filter catches it (verified by `test_synthesize_drops_operations_not_in_candidate_list`).
+- `refine_synthesis` with hard 3-iteration cap (`DEFAULT_MAX_REFINEMENT_ROUNDS=3`). Past the cap raises `RefinementLimitExceeded`; the CLI surfaces the manual-edit affordance.
+- `confirm_and_persist` stamps `reviewed_at` (RFC 3339) and writes the .uacp file; `approved=True` required else `SynthesisNotApprovedError`. Default `$schema` URL is the v1.1.0 tag.
+- §6.6 audit emit at synthesis-started + llm-call-completed boundaries. Payloads carry `intent_len` (not the intent string), `capture_ref`, `kept_ops`, `dropped_ops`, `raw_chars`. Operator-supplied intent text never appears in audit logs (verified by `test_synthesis_audit_does_not_log_user_intent_verbatim`).
+
+### Spec-level §3.12 enforcement (spec/models.py + spec/schema.py)
+
+- New `CaptureSource` pydantic model: type=capture, captured_at, user_intent, capture_ref, confidence?, reviewed_at — all non-empty per field-validator. `capture_ref` MUST be a `secret://` URI per §2.7.
+- New `_validate_capture_provenance` pass in spec/schema.py mirroring `_validate_inferred_provenance`. Surfaces a uniform `SpecValidationError` when any of (captured_at / user_intent / capture_ref / reviewed_at) is missing or empty.
+- Implements the brief's hard rule "loading code in spec/loader.py rejects any .uacp file with source.type: 'capture' AND missing source.reviewed_at" — spec-level enforcement, not just a UX prompt. Verified by `test_capture_uacp_without_reviewed_at_fails_to_load`.
+
+### CLI (synthesize-from-capture)
+
+- New top-level subcommand: `--capture-ref <secret://> --intent "<NL>" --output FILE [--force]`.
+- Validates secret-URI shape, refuses to overwrite without `--force`, rejects empty intent.
+- Renders the draft (id / summary / method+path / idempotency / params with required/optional flags / provenance) and surfaces hallucinated-and-dropped operations separately for transparency.
+- Interactive review prompt accepts `a`/`approve`, `e`/`edit`, `r`/`refine`, `x`/`abort` (single-letter or word-form via `_DECISION_ALIASES`); loops on unrecognized; EOF treats as abort.
+- Edit path opens `$EDITOR` on a tempfile holding the assembled .uacp draft; on save, replaces the in-memory draft with reviewed_at cleared.
+- Refine path catches `RefinementLimitExceeded` after 3 rounds with a clear "switch to manual editing" message.
+- Approve path → `confirm_and_persist(approved=True)` + write + §6.6 file-persisted audit event + exit 0.
+- §6.6 audit emit at user-reviewed (decision letter) + file-persisted (output_path + operation_count).
+
+### Auth-block selection design decision
+
+The synthesis pipeline produces the **operations** block; the **authentication** block is the operator's decision and is not synthesized. The drafted .uacp file ships with `authentication: {}` and a `dispatch.base_url` derived from the capture's primary host. The operator fills in the matching auth block (typically `session_cookie` per §2.10, or one of the OAuth methods) before the file passes `uacp validate`. Auth-block-from-capture inference (e.g. mapping `auth_artifacts.cookie_names` to a §2.10 cookie whitelist) is a future-`v1.x` candidate; Stage 11.2 stops at the operations level per the brief's framing.
+
+### README
+
+New "Operation synthesis from captures (v1.1)" section walks the pipeline, the four review-prompt choices, the auth-block-not-synthesized design decision (with the documented operator-edit step before validate), the LLMCallable / OpenRouter integration, the §6.6 audit event set, and the mechanical hallucination-drop rule.
+
+### Live demonstration (this machine, headless mode)
+
+```
+$ uv run python -m uacp_prototype.cli capture-session \\
+    --initial-url https://httpbin.org/anything?demo=stage11-2 \\
+    --output secret://local-keyring/stage11-2-demo-capture \\
+    --provider httpbin-stage11-2
+Captured 1 request(s) over 5.2s. Persisting...
+Capture stored at secret://local-keyring/stage11-2-demo-capture.
+
+$ uv run python -m uacp_prototype.cli synthesize-from-capture \\
+    --capture-ref secret://local-keyring/stage11-2-demo-capture \\
+    --intent "I called the httpbin /anything diagnostic endpoint with a demo query parameter to inspect what httpbin echoes back." \\
+    --output ./httpbin-anything.uacp
+Synthesized 1 operation(s) from capture secret://... (round 0, model mock/recorded-stage11-2-demo):
+  1. id: inspect_request
+     summary: Echoes the request method, headers, and query parameters via httpbin.org/anything.
+     GET /anything
+     idempotency: idempotent
+     query_parameters: demo (optional)
+     provenance: source.type=capture confidence=medium reviewed_at=(pending)
+Approve all (a), edit individual operations in $EDITOR (e), refine via natural language (r), or abort (x)? a
+Approved. Wrote 1 operation(s) to /private/tmp/httpbin-anything.uacp.
+```
+
+After the operator adds a session_cookie (or here, an api_key_header) auth block, `uacp validate ./httpbin-anything.uacp` reports OK with `authentication=api_key_header, base_url=https://httpbin.org, 1 operation idempotency=idempotent`.
+
+### Honest read on synthesis quality
+
+- Structurally sound: analyzer clustering deterministic + tested; hallucination-drop mechanical; persistence-requires-approval enforced spec-side at three layers (CLI prompt + ingest_capture.confirm_and_persist + spec/schema._validate_capture_provenance).
+- The QUALITY of LLM-produced operations against real LLM responses is operator-driven post-session. The architecture lets operators swap `_build_capture_llm` for any LLMCallable; no `OPENROUTER_API_KEY` was configured in this session, so the live demo used a recorded mock-LLM response. The recorded response is realistic but not adversarial.
+- Stage 11.3+ candidates: real-LLM validation (Anthropic Haiku 4.5 against Slack / NotebookLM / Notion captures); auth-block-from-capture inference; GraphQL-shaped POST-only capture support; session-capable Scrapling browser API.
+
+### Test counts
+
+**596 unit tests passing** (508 Stage 11.1 baseline + 40 analyzer + 22 synthesis + 26 CLI = 88 new), **1 skipped** (the playwright-not-installed self-skip when capture extras are present), **36 integration tests deselected by default** (25 provider + 8 MCP + 1 scrapling + 2 capture_integration). 0 failures. Run wall ~0.70s.
+
+### Spec gaps surfaced
+
+ZERO. Stage 11.2 is implementation only — no spec content changed.
+
+### Hard rules honored
+
+- Synthesis MUST NOT persist without explicit user approval — verified at three layers.
+- Clustering algorithm is deterministic; no LLM imports in capture/analyzer.py — verified by `test_clustering_is_deterministic`.
+- Prompt instructs LLM not to hallucinate AND filter mechanically drops hallucinations beyond the candidate list — verified by `test_synthesize_drops_operations_not_in_candidate_list`.
+- Did not update the v1.1 spec.
+- Did not push the repo or any tag.
+- The refinement loop has a hard cap of 3 — verified by `test_refine_synthesis_caps_at_three_rounds`.
+
+### UACP commit chain on top of `42012cc` (Stage 11.1 memory tip)
+
+- `4c066f1 feat(prototype): capture analyzer — clustering + parameter inference`
+- `9c69c1f feat(prototype): LLM synthesis pipeline from capture artifacts`
+- `c0dd056 feat(prototype): synthesize-from-capture CLI + user-review surface`
+
+This memory commit will land on top of `c0dd056`. **No tag this session.**
+
+### Operator action items
+
+Push the three prototype commits + this memory commit to `origin/main`. No tag — Stage 11.2 is implementation against the frozen v1.1.0 spec.
+
+### UACP commit plan
+
+3 prototype commits already landed. Single memory commit — `memory: UACP Stage 11.2 — operation synthesis from captures`. **No tag.** Operator pushes manually.
