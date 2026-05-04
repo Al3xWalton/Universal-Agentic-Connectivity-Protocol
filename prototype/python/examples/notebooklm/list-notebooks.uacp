@@ -1,5 +1,5 @@
 {
-  "$schema": "https://uacp.spec/v1/schema.json",
+  "$schema": "https://raw.githubusercontent.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol/v1.0.0/schemas/uacp.json",
   "name": "google-notebooklm-list-notebooks",
   "version": "0.1.0",
   "description": "Google NotebookLM list-notebooks via the same RPC endpoint the web UI uses. NotebookLM has no public API; this artifact replays the user's browser session cookies. Authenticates via session_cookie per §2.10 — operator MUST evaluate Google's Terms of Service and accept responsibility before enabling. Reference implementation pattern: github.com/teng-lin/notebooklm-py.",

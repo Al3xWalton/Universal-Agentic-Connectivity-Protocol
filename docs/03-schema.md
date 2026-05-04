@@ -614,13 +614,13 @@ An already-stored `.uacp` artifact contains operations whose conflicts have alre
 
 ## 3.10 Schema validation rules
 
-A `.uacp` artifact MUST validate against the published JSON Schema for UACP `v1.x` before a `Conforming Implementation` accepts it for storage or load. This section specifies the validation rules; the JSON Schema document itself is referenced by `$schema` URL inside each artifact, and the canonical URL form is finalized in [Stage 9 — Prototype](./09-prototype.md) when the spec is frozen. Until that point, implementations MAY use a placeholder URL of the form `https://uacp.spec/v1/schema.json` with the understanding that the URL will be replaced before `v1.0` freeze; artifacts pinning a specific URL today MUST be re-pinnable at freeze time without semantic change.
+A `.uacp` artifact MUST validate against the published JSON Schema for UACP `v1.x` before a `Conforming Implementation` accepts it for storage or load. This section specifies the validation rules; the JSON Schema document itself is referenced by `$schema` URL inside each artifact, and the canonical URL is `https://raw.githubusercontent.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol/v1.0.0/schemas/uacp.json` (pinned at the v1.0.0 spec-freeze tag). v1.x revisions reuse this URL because the wire format is forward-compatible within the major version; v2 will publish a different URL when it lands.
 
 ### Required validations
 
 A `Conforming Implementation` MUST perform the following validations at parse time. The validation list is normative; implementations MAY perform additional checks beyond this list.
 
-- **`$schema` reference present.** The artifact's top level MUST include a `$schema` field pointing at the canonical UACP `v1.x` schema URL (or the placeholder above pending Stage 9).
+- **`$schema` reference present.** The artifact's top level MUST include a `$schema` field pointing at the canonical UACP `v1.x` schema URL (per the URL above).
 - **Top-level structure.** The artifact MUST be a JSON object with at minimum the fields specified in earlier stages: `authentication` (per Stage 2), `operations` (per this stage), and any base-URL or `Provider`-identification fields specified by Stage 4. Additional top-level fields permitted by the JSON Schema are accepted.
 - **Operation `id` uniqueness.** No two operations in the `operations` array share an `id`. Duplicates MUST cause rejection.
 - **Operation `id` charset.** Every `id` matches `[a-z][a-z0-9_-]{0,127}` per §3.1.

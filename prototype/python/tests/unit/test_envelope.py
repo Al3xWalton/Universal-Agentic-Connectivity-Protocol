@@ -140,7 +140,7 @@ def test_select_response_entry_no_match() -> None:
 
 def test_failure_predicate_field_loads_through_spec() -> None:
     raw = {
-        "$schema": "https://uacp.spec/v1/schema.json",
+        "$schema": "https://raw.githubusercontent.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol/v1.0.0/schemas/uacp.json",
         "authentication": {"method": "x-test"},
         "dispatch": {"base_url": "https://api.example.com"},
         "operations": [
@@ -173,7 +173,7 @@ def test_failure_predicate_field_loads_through_spec() -> None:
 
 def test_failure_predicate_path_must_start_with_dollar() -> None:
     raw = {
-        "$schema": "https://uacp.spec/v1/schema.json",
+        "$schema": "https://raw.githubusercontent.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol/v1.0.0/schemas/uacp.json",
         "authentication": {"method": "x-test"},
         "dispatch": {"base_url": "https://api.example.com"},
         "operations": [
@@ -214,7 +214,7 @@ def _silent_sleep(_secs: float) -> None:
 
 def _slack_artifact() -> UACPArtifact:
     raw = {
-        "$schema": "https://uacp.spec/v1/schema.json",
+        "$schema": "https://raw.githubusercontent.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol/v1.0.0/schemas/uacp.json",
         "authentication": {"method": "x-oauth2-workspace"},
         "dispatch": {"base_url": "https://slack.com"},
         "operations": [
@@ -341,7 +341,7 @@ def test_dispatch_predicate_absent_falls_through_to_success() -> None:
     """An operation without failure_predicate behaves identically to
     Stage 8a: 2xx → DispatchSuccess regardless of body content."""
     raw = {
-        "$schema": "https://uacp.spec/v1/schema.json",
+        "$schema": "https://raw.githubusercontent.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol/v1.0.0/schemas/uacp.json",
         "authentication": {"method": "x-test"},
         "dispatch": {"base_url": "https://api.example.com"},
         "operations": [

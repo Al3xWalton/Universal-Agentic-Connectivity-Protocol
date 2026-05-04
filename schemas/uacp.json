@@ -1,0 +1,522 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol/v1.0.0/schemas/uacp.json",
+  "title": "UACP v1.0 Artifact Schema",
+  "description": "Canonical JSON Schema for a UACP v1.0 (.uacp) artifact. Validates the wire format described in docs/03-schema.md (top-level structure, operation shape, request/response/pagination shapes), docs/02-authentication.md (the ten registered authentication methods + the x-namespaced extension surface), and docs/06-security.md §6.2 (the registered secret-store types and the secret:// credential URI convention). The schema is JSON Schema 2020-12. Semantic validations beyond pure structural checking — bidirectional path-parameter coverage, embedded-credential detection, $ref locality, inferred-source provenance completeness — are NOT expressed in this schema and MUST be enforced by the implementation's validation layer per §3.10.",
+  "type": "object",
+  "required": ["authentication", "dispatch", "operations"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "format": "uri",
+      "description": "Pointer at the canonical UACP v1.x schema URL per §3.10 / §7.1."
+    },
+    "name": {
+      "type": "string",
+      "description": "Optional human-readable name for the artifact."
+    },
+    "version": {
+      "type": "string",
+      "description": "Optional artifact-author-defined version string. Distinct from the spec's $schema-identified protocol version."
+    },
+    "description": {
+      "type": "string",
+      "description": "Optional human-readable description of the artifact's purpose."
+    },
+    "authentication": {
+      "$ref": "#/$defs/AuthenticationBlock"
+    },
+    "dispatch": {
+      "$ref": "#/$defs/DispatchConfig"
+    },
+    "operations": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/Operation" },
+      "description": "Per §3.5, an artifact MUST declare at least one operation."
+    },
+    "definitions": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Per §3.5, the artifact-local definitions block referenced by $ref pointers of the form #/definitions/<name>. Remote $refs are forbidden per §3.10."
+    },
+    "encrypted_secrets": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/EncryptedSecret" },
+      "description": "Per §6.2's inline-encrypted secret-store. Each entry holds an AES-256-GCM ciphertext + key_ref + iv + tag."
+    }
+  },
+  "additionalProperties": true,
+
+  "$defs": {
+
+    "AuthenticationBlock": {
+      "type": "object",
+      "required": ["method"],
+      "properties": {
+        "method": {
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "oauth2_authorization_code",
+                "oauth2_client_credentials",
+                "oauth2_device_code",
+                "oauth1a",
+                "api_key_header",
+                "api_key_query",
+                "aws_sigv4",
+                "hmac_signature",
+                "session_cookie",
+                "custom_auth"
+              ],
+              "description": "One of the ten v1.0 registered methods per §2.1."
+            },
+            {
+              "type": "string",
+              "pattern": "^x-[a-z0-9_-]+$",
+              "description": "An in-development extension method per §7.3, x-prefixed."
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "method": { "const": "session_cookie" } }, "required": ["method"] },
+          "then": {
+            "required": ["tos_acknowledged"],
+            "properties": {
+              "tos_acknowledged": {
+                "const": true,
+                "description": "Per §2.10 + §2.9 MUST NOT items: session_cookie auth MUST carry tos_acknowledged: true (literal boolean). Strings, integers, false, missing — all rejected."
+              },
+              "storage_state_ref": { "$ref": "#/$defs/SecretReference" },
+              "cookie_names": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 },
+                "minItems": 1,
+                "description": "Whitelist of cookie names to inject from the captured storage state."
+              },
+              "csrf_token": {
+                "type": "object",
+                "required": ["header_name"],
+                "properties": {
+                  "header_name": { "type": "string", "minLength": 1 },
+                  "cookie_name": { "type": "string", "minLength": 1 },
+                  "refresh_url": { "type": "string", "format": "uri" },
+                  "extraction_path": { "type": "string", "minLength": 1 },
+                  "extraction_format": { "type": "string", "enum": ["json", "regex"] }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "method": { "const": "oauth2_authorization_code" } }, "required": ["method"] },
+          "then": {
+            "required": ["authorization_endpoint", "token_endpoint", "client_id", "scopes", "redirect_uri"],
+            "properties": {
+              "authorization_endpoint": { "type": "string", "format": "uri" },
+              "token_endpoint": { "type": "string", "format": "uri" },
+              "client_id": { "type": "string" },
+              "client_secret_ref": { "$ref": "#/$defs/SecretReference" },
+              "scopes": { "type": "array", "items": { "type": "string" } },
+              "redirect_uri": { "type": "string", "format": "uri" },
+              "pkce": { "type": "string", "enum": ["S256", "plain"] }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "method": { "const": "oauth2_client_credentials" } }, "required": ["method"] },
+          "then": {
+            "required": ["token_endpoint", "client_id", "client_secret_ref"],
+            "properties": {
+              "token_endpoint": { "type": "string", "format": "uri" },
+              "client_id": { "type": "string" },
+              "client_secret_ref": { "$ref": "#/$defs/SecretReference" },
+              "scopes": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "method": { "const": "oauth2_device_code" } }, "required": ["method"] },
+          "then": {
+            "required": ["device_authorization_endpoint", "token_endpoint", "client_id", "scopes"],
+            "properties": {
+              "device_authorization_endpoint": { "type": "string", "format": "uri" },
+              "token_endpoint": { "type": "string", "format": "uri" },
+              "client_id": { "type": "string" },
+              "client_secret_ref": { "$ref": "#/$defs/SecretReference" },
+              "scopes": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "method": { "const": "oauth1a" } }, "required": ["method"] },
+          "then": {
+            "required": ["request_token_endpoint", "authorize_endpoint", "access_token_endpoint", "consumer_key", "consumer_secret_ref"],
+            "properties": {
+              "request_token_endpoint": { "type": "string", "format": "uri" },
+              "authorize_endpoint": { "type": "string", "format": "uri" },
+              "access_token_endpoint": { "type": "string", "format": "uri" },
+              "consumer_key": { "type": "string" },
+              "consumer_secret_ref": { "$ref": "#/$defs/SecretReference" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "method": { "const": "api_key_header" } }, "required": ["method"] },
+          "then": {
+            "required": ["header_name", "key_ref"],
+            "properties": {
+              "header_name": { "type": "string", "minLength": 1 },
+              "header_prefix": { "type": "string" },
+              "key_ref": { "$ref": "#/$defs/SecretReference" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "method": { "const": "api_key_query" } }, "required": ["method"] },
+          "then": {
+            "required": ["parameter_name", "key_ref"],
+            "properties": {
+              "parameter_name": { "type": "string", "minLength": 1 },
+              "key_ref": { "$ref": "#/$defs/SecretReference" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "method": { "const": "aws_sigv4" } }, "required": ["method"] },
+          "then": {
+            "required": ["region", "service", "access_key_ref", "secret_key_ref"],
+            "properties": {
+              "region": { "type": "string", "minLength": 1 },
+              "service": { "type": "string", "minLength": 1 },
+              "access_key_ref": { "$ref": "#/$defs/SecretReference" },
+              "secret_key_ref": { "$ref": "#/$defs/SecretReference" },
+              "session_token_ref": { "$ref": "#/$defs/SecretReference" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "method": { "const": "hmac_signature" } }, "required": ["method"] },
+          "then": {
+            "required": ["algorithm", "secret_ref", "header_name", "signed_string"],
+            "properties": {
+              "algorithm": { "type": "string", "enum": ["HMAC-SHA256", "HMAC-SHA512"] },
+              "secret_ref": { "$ref": "#/$defs/SecretReference" },
+              "header_name": { "type": "string", "minLength": 1 },
+              "signed_string": { "type": "string", "minLength": 1, "description": "Per §2.5.2's ${...} substitution language." }
+            }
+          }
+        }
+      ],
+      "additionalProperties": true,
+      "description": "Top-level authentication block. Method-specific fields land at the same level (not nested) — the `method` field discriminates."
+    },
+
+    "DispatchConfig": {
+      "type": "object",
+      "required": ["base_url"],
+      "properties": {
+        "base_url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://",
+          "description": "Per Principle 11 / §4.2: HTTPS only."
+        },
+        "default_headers": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "default_timeout_ms": { "type": "integer", "minimum": 1, "default": 30000 },
+        "default_user_agent": { "type": "string" },
+        "idempotency_key_header": { "type": "string", "default": "Idempotency-Key" },
+        "allow_method_changing_redirects": { "type": "boolean", "default": false }
+      },
+      "additionalProperties": true
+    },
+
+    "Operation": {
+      "type": "object",
+      "required": ["id", "summary", "request", "response"],
+      "properties": {
+        "id": { "$ref": "#/$defs/IdString" },
+        "summary": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "tags": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/IdString" }
+        },
+        "deprecated": { "type": "boolean", "default": false },
+        "idempotency": {
+          "type": "string",
+          "enum": ["idempotent", "not_idempotent", "unknown"],
+          "default": "unknown"
+        },
+        "request": { "$ref": "#/$defs/RequestShape" },
+        "response": {
+          "type": "object",
+          "minProperties": 1,
+          "patternProperties": {
+            "^(default|[1-5][0-9]{2}|[1-5]xx)$": { "$ref": "#/$defs/ResponseEntry" }
+          },
+          "additionalProperties": false,
+          "description": "Per §3.3: keys are exact 3-digit status, status range (1xx-5xx), or the literal 'default'."
+        },
+        "pagination": { "$ref": "#/$defs/Pagination" },
+        "source": { "$ref": "#/$defs/Source" },
+        "timeout_ms": { "type": "integer", "minimum": 1 },
+        "retry": { "$ref": "#/$defs/RetryOverride" }
+      },
+      "additionalProperties": true
+    },
+
+    "IdString": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,127}$",
+      "description": "Per §3.1's id charset."
+    },
+
+    "RequestShape": {
+      "type": "object",
+      "required": ["method", "path"],
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
+          "description": "Per §3.2: uppercase HTTP verb from the registered set."
+        },
+        "path": {
+          "type": "string",
+          "not": { "pattern": "\\?" },
+          "description": "Path template with {brace}-delimited path parameters. Query string is declared separately under query_parameters; embedding it in path is rejected."
+        },
+        "path_parameters": { "$ref": "#/$defs/JSONSchemaObject" },
+        "query_parameters": { "$ref": "#/$defs/JSONSchemaObject" },
+        "headers": { "$ref": "#/$defs/JSONSchemaObject" },
+        "body": { "$ref": "#/$defs/RequestBody" }
+      },
+      "additionalProperties": true
+    },
+
+    "JSONSchemaObject": {
+      "type": "object",
+      "description": "An embedded JSON Schema 2020-12 object. The properties subset is the most common shape; this schema permits the full draft surface.",
+      "additionalProperties": true
+    },
+
+    "RequestBody": {
+      "oneOf": [
+        { "type": "string", "const": "none" },
+        {
+          "type": "object",
+          "required": ["$ref"],
+          "properties": {
+            "$ref": {
+              "type": "string",
+              "pattern": "^#/definitions/[A-Za-z][A-Za-z0-9_-]*$"
+            }
+          },
+          "additionalProperties": false,
+          "description": "Local $ref against the artifact's definitions block. Remote $refs forbidden per §3.10."
+        },
+        {
+          "type": "object",
+          "required": ["schema"],
+          "properties": {
+            "media_type": { "type": "string", "default": "application/json" },
+            "schema": { "$ref": "#/$defs/JSONSchemaObject" }
+          },
+          "additionalProperties": true
+        }
+      ]
+    },
+
+    "ResponseEntry": {
+      "type": "object",
+      "required": ["description"],
+      "properties": {
+        "description": { "type": "string" },
+        "body": { "$ref": "#/$defs/ResponseBody" },
+        "headers": { "$ref": "#/$defs/JSONSchemaObject" },
+        "streaming": { "type": "boolean", "default": false },
+        "failure_predicate": { "$ref": "#/$defs/FailurePredicate" }
+      },
+      "additionalProperties": true
+    },
+
+    "ResponseBody": {
+      "oneOf": [
+        { "type": "string", "const": "none" },
+        {
+          "type": "object",
+          "required": ["$ref"],
+          "properties": {
+            "$ref": {
+              "type": "string",
+              "pattern": "^#/definitions/[A-Za-z][A-Za-z0-9_-]*$"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "media_type": { "type": "string" },
+            "format": {
+              "type": "string",
+              "enum": ["json", "xml", "binary", "text"],
+              "description": "Per the §3.3 Stage 8c amendment: response-body format discriminator. Defaults to json when absent."
+            },
+            "schema": { "$ref": "#/$defs/JSONSchemaObject" }
+          },
+          "additionalProperties": true,
+          "description": "Inline form. Either schema (JSON-shaped body) or format (xml/binary/text) MUST be present; either alone is sufficient."
+        }
+      ]
+    },
+
+    "FailurePredicate": {
+      "type": "object",
+      "required": ["path", "equals"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^\\$\\.",
+          "description": "JSONPath subset per §3.4 (e.g., $.ok, $.response.error)."
+        },
+        "equals": {
+          "description": "JSON literal that, when matched at the path, indicates logical failure."
+        },
+        "code_path": { "type": "string", "pattern": "^\\$\\." },
+        "message_path": { "type": "string", "pattern": "^\\$\\." }
+      },
+      "additionalProperties": false,
+      "description": "Per the §3.3 Stage 8b amendment + §4.6: body-shape failure predicate for 200-with-{ok:false} envelope shapes."
+    },
+
+    "Pagination": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["pattern", "request_cursor_parameter", "response_cursor_path"],
+          "properties": {
+            "pattern": { "const": "cursor" },
+            "request_cursor_parameter": { "type": "string", "minLength": 1 },
+            "response_cursor_path": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["pattern", "request_offset_parameter", "request_limit_parameter"],
+          "properties": {
+            "pattern": { "const": "offset" },
+            "request_offset_parameter": { "type": "string", "minLength": 1 },
+            "request_limit_parameter": { "type": "string", "minLength": 1 },
+            "response_total_path": { "type": "string", "minLength": 1 },
+            "response_has_more_path": { "type": "string", "minLength": 1 }
+          },
+          "anyOf": [
+            { "required": ["response_total_path"] },
+            { "required": ["response_has_more_path"] }
+          ],
+          "additionalProperties": false,
+          "description": "Per §3.4: offset pagination requires at least one terminator (total or has_more)."
+        },
+        {
+          "type": "object",
+          "required": ["pattern"],
+          "properties": {
+            "pattern": { "const": "link_header" }
+          },
+          "additionalProperties": false,
+          "description": "Per the §3.4 Stage 8d amendment: RFC 8288 Link-header pagination."
+        },
+        {
+          "type": "object",
+          "required": ["pattern"],
+          "properties": {
+            "pattern": { "const": "none" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+
+    "Source": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["type", "url", "ingested_at"],
+          "properties": {
+            "type": { "const": "openapi" },
+            "url": { "type": "string", "format": "uri" },
+            "ingested_at": { "type": "string", "format": "date-time" }
+          },
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "required": ["type", "captured_at"],
+          "properties": {
+            "type": { "const": "curl" },
+            "captured_at": { "type": "string", "format": "date-time" },
+            "raw": { "type": "string" }
+          },
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "required": ["type", "model", "description", "reviewed_at"],
+          "properties": {
+            "type": { "const": "inferred" },
+            "model": { "type": "string", "minLength": 1 },
+            "description": { "type": "string", "minLength": 1 },
+            "confidence": { "type": "string", "enum": ["low", "medium", "high"] },
+            "reviewed_at": { "type": "string", "format": "date-time" }
+          },
+          "additionalProperties": true,
+          "description": "Per §3.8: an inferred source MUST carry non-empty model + description + reviewed_at; the reviewed_at field is the operator's signature on the LLM-generated artifact."
+        }
+      ]
+    },
+
+    "RetryOverride": {
+      "type": "object",
+      "properties": {
+        "max_attempts": { "type": "integer", "minimum": 1 },
+        "initial_delay_ms": { "type": "integer", "minimum": 0 },
+        "max_delay_ms": { "type": "integer", "minimum": 0 },
+        "jitter": { "type": "number", "minimum": 0, "maximum": 1 },
+        "multiplier": { "type": "number", "exclusiveMinimum": 0 }
+      },
+      "additionalProperties": false,
+      "description": "Per §4.3: per-operation retry-policy override."
+    },
+
+    "EncryptedSecret": {
+      "type": "object",
+      "required": ["ciphertext", "key_ref", "iv", "tag"],
+      "properties": {
+        "ciphertext": { "type": "string", "minLength": 1 },
+        "algorithm": { "type": "string", "const": "AES-256-GCM", "default": "AES-256-GCM" },
+        "key_ref": {
+          "type": "string",
+          "pattern": "^secret://(?!inline-encrypted/).+",
+          "description": "secret:// URI per §2.7. Per §6.2: MUST NOT recurse — key_ref MUST NOT itself point at another inline-encrypted secret."
+        },
+        "iv": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+
+    "SecretReference": {
+      "type": "string",
+      "pattern": "^secret://[a-z][a-z0-9_-]*/[^\\s]+$",
+      "description": "Per §2.7: secret://<store-type>/<key-path>. Permitted store types per §6.2: vault, aws-secrets-manager, local-keyring, inline-encrypted (plus x-namespaced extensions per §7.3). Implementations MUST verify the store-type segment matches a registered or x-namespaced identifier; this schema enforces only the URI shape."
+    }
+  }
+}

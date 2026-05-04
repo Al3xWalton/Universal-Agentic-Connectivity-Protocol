@@ -1,5 +1,5 @@
 {
-  "$schema": "https://uacp.spec/v1/schema.json",
+  "$schema": "https://raw.githubusercontent.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol/v1.0.0/schemas/uacp.json",
   "name": "google-notebooklm-send-chat",
   "version": "0.1.0",
   "description": "Google NotebookLM send-chat-message via the same RPC endpoint the web UI uses. Authenticates via session_cookie per §2.10. Operator MUST evaluate Google's Terms of Service and accept responsibility before enabling.",

@@ -1,5 +1,5 @@
 {
-  "$schema": "https://uacp.spec/v1/schema.json",
+  "$schema": "https://raw.githubusercontent.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol/v1.0.0/schemas/uacp.json",
   "name": "github-repos-get",
   "version": "0.1.0",
   "description": "GitHub Get a Repository — fetch metadata for a single repository by owner+repo. Authenticates with a Personal Access Token (PAT) carried in Authorization: Bearer. GitHub's three PAT formats (ghp_, github_pat_, gho_) all use the same wire shape; UACP doesn't distinguish them.",

@@ -1,5 +1,5 @@
 {
-  "$schema": "https://uacp.spec/v1/schema.json",
+  "$schema": "https://raw.githubusercontent.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol/v1.0.0/schemas/uacp.json",
   "name": "slack-chat-postmessage",
   "version": "0.1.0",
   "description": "Slack chat.postMessage — sends a message to a channel via the Slack Web API. Authenticates with a workspace bot token (xoxb-...).",

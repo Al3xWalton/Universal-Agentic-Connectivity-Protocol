@@ -201,7 +201,7 @@ def test_spec_accepts_format_xml() -> None:
     from uacp_prototype.spec.models import UACPArtifact
 
     raw = {
-        "$schema": "https://uacp.spec/v1/schema.json",
+        "$schema": "https://raw.githubusercontent.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol/v1.0.0/schemas/uacp.json",
         "authentication": {"method": "x-test"},
         "dispatch": {"base_url": "https://example.com"},
         "operations": [
@@ -228,7 +228,7 @@ def test_spec_accepts_format_binary_without_schema() -> None:
     from uacp_prototype.spec.loader import load_dict
 
     raw = {
-        "$schema": "https://uacp.spec/v1/schema.json",
+        "$schema": "https://raw.githubusercontent.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol/v1.0.0/schemas/uacp.json",
         "authentication": {"method": "x-test"},
         "dispatch": {"base_url": "https://example.com"},
         "operations": [
@@ -254,7 +254,7 @@ def test_spec_rejects_unknown_format() -> None:
     from uacp_prototype.spec.schema import SpecValidationError
 
     raw = {
-        "$schema": "https://uacp.spec/v1/schema.json",
+        "$schema": "https://raw.githubusercontent.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol/v1.0.0/schemas/uacp.json",
         "authentication": {"method": "x-test"},
         "dispatch": {"base_url": "https://example.com"},
         "operations": [

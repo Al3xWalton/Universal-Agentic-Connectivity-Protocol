@@ -1,5 +1,5 @@
 {
-  "$schema": "https://uacp.spec/v1/schema.json",
+  "$schema": "https://raw.githubusercontent.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol/v1.0.0/schemas/uacp.json",
   "name": "github-repos-list-for-user",
   "version": "0.1.0",
   "description": "GitHub List Repositories for User — list public repositories owned by a user. RFC 8288 link-header paginated; the dispatcher follows rel=\"next\" until the header omits a next relation.",

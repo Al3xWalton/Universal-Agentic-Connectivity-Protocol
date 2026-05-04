@@ -38,7 +38,7 @@ def _silent_sleep(_secs: float) -> None:
 
 def _artifact(operations: list[dict[str, Any]]) -> UACPArtifact:
     raw = {
-        "$schema": "https://uacp.spec/v1/schema.json",
+        "$schema": "https://raw.githubusercontent.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol/v1.0.0/schemas/uacp.json",
         "authentication": {"method": "x-test-static"},
         "dispatch": {"base_url": "https://api.example.com"},
         "operations": operations,

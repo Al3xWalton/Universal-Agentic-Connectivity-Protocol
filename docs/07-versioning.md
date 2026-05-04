@@ -39,7 +39,7 @@ UACP adopts semantic versioning ([[SemVer 2.0.0](https://semver.org/spec/v2.0.0.
 
 ### `$schema` identification
 
-A `.uacp` artifact identifies the version it was authored against through its top-level `$schema` field, introduced in §3.10. The canonical URL form is finalized in [Stage 9 — Prototype](./09-prototype.md); for the duration of `v0.x`, the placeholder `https://uacp.spec/v1/schema.json` is used, and artifacts pinning the placeholder MUST be re-pinnable at freeze without semantic change.
+A `.uacp` artifact identifies the version it was authored against through its top-level `$schema` field, introduced in §3.10. The canonical URL form pins the schema document at the spec repo's MINOR-release git tag: `https://raw.githubusercontent.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol/v1.<minor>.0/schemas/uacp.json`. The `v1.0.0` URL is `https://raw.githubusercontent.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol/v1.0.0/schemas/uacp.json`; the `v1.1.0` URL will be `https://raw.githubusercontent.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol/v1.1.0/schemas/uacp.json`; and so on.
 
 The `$schema` URL identifies the MAJOR.MINOR version. PATCH releases do not change the URL, because PATCH releases do not change the wire format. An artifact authored against `v1.2.0` and an artifact authored against `v1.2.3` reference the same `$schema` URL.
 

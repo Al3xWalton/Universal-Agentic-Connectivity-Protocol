@@ -185,7 +185,7 @@ def test_confirm_with_approval_returns_artifact() -> None:
         authentication={"method": "x-test"},
         dispatch={"base_url": "https://example.com"},
     )
-    assert artifact["$schema"] == "https://uacp.spec/v1/schema.json"
+    assert artifact["$schema"] == "https://raw.githubusercontent.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol/v1.0.0/schemas/uacp.json"
     assert artifact["authentication"] == {"method": "x-test"}
     assert artifact["dispatch"] == {"base_url": "https://example.com"}
     assert len(artifact["operations"]) == 1
@@ -277,7 +277,7 @@ def test_unconfirmed_artifact_fails_spec_loader() -> None:
         },
     }
     artifact = {
-        "$schema": "https://uacp.spec/v1/schema.json",
+        "$schema": "https://raw.githubusercontent.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol/v1.0.0/schemas/uacp.json",
         "authentication": {"method": "x-test"},
         "dispatch": {"base_url": "https://example.com"},
         "operations": [op],

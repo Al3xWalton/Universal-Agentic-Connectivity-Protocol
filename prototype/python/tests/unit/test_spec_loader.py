@@ -21,7 +21,7 @@ def _minimal_artifact() -> dict[str, object]:
     this dict to exercise individual failure paths.
     """
     return {
-        "$schema": "https://uacp.spec/v1/schema.json",
+        "$schema": "https://raw.githubusercontent.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol/v1.0.0/schemas/uacp.json",
         "authentication": {
             "method": "oauth2_authorization_code",
             "authorization_endpoint": "https://example.com/oauth2/authorize",
@@ -81,7 +81,7 @@ def test_default_schema_url_is_placeholder() -> None:
     raw = _minimal_artifact()
     raw.pop("$schema")
     art = load_dict(raw)
-    assert art.schema_url == "https://uacp.spec/v1/schema.json"
+    assert art.schema_url == "https://raw.githubusercontent.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol/v1.0.0/schemas/uacp.json"
 
 
 # ---------------------------------------------------------------------------

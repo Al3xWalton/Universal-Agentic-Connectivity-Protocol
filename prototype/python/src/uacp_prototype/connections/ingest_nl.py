@@ -366,7 +366,7 @@ def confirm_and_persist(
     authentication: dict[str, Any] | None = None,
     dispatch: dict[str, Any] | None = None,
     definitions: dict[str, Any] | None = None,
-    schema_url: str = "https://uacp.spec/v1/schema.json",
+    schema_url: str = "https://raw.githubusercontent.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol/v1.0.0/schemas/uacp.json",
     now: _dt.datetime | None = None,
 ) -> dict[str, Any]:
     """Stamp the draft with reviewed_at and (optionally) write to disk.

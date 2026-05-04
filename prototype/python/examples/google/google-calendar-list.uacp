@@ -1,5 +1,5 @@
 {
-  "$schema": "https://uacp.spec/v1/schema.json",
+  "$schema": "https://raw.githubusercontent.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol/v1.0.0/schemas/uacp.json",
   "name": "google-calendar",
   "version": "0.1.0",
   "description": "Google Calendar events.list — lists events on a calendar. Cursor-paginated via pageToken.",

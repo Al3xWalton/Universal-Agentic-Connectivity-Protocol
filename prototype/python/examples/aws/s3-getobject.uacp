@@ -1,5 +1,5 @@
 {
-  "$schema": "https://uacp.spec/v1/schema.json",
+  "$schema": "https://raw.githubusercontent.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol/v1.0.0/schemas/uacp.json",
   "name": "aws-s3-getobject",
   "version": "0.1.0",
   "description": "AWS S3 GetObject — download an object from an S3 bucket. Authenticates with SigV4 (per §2.5.1) using long-lived AWS access keys or STS-derived session credentials. Response body is binary content; content type comes from the wire Content-Type response header.",

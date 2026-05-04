@@ -1,5 +1,5 @@
 {
-  "$schema": "https://uacp.spec/v1/schema.json",
+  "$schema": "https://raw.githubusercontent.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol/v1.0.0/schemas/uacp.json",
   "name": "slack-conversations-list",
   "version": "0.1.0",
   "description": "Slack conversations.list — lists conversations (channels, DMs, groups) the bot is a member of. Cursor-paginated via response_metadata.next_cursor (nested cursor field — exercises §3.4's JSONPath subset against a deeply-nested cursor location).",

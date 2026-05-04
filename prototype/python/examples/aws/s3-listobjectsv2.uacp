@@ -1,5 +1,5 @@
 {
-  "$schema": "https://uacp.spec/v1/schema.json",
+  "$schema": "https://raw.githubusercontent.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol/v1.0.0/schemas/uacp.json",
   "name": "aws-s3-listobjectsv2",
   "version": "0.1.0",
   "description": "AWS S3 ListObjectsV2 — list objects in an S3 bucket. Authenticates with SigV4 per §2.5.1. Returns an XML response body with cursor-paginated results via the NextContinuationToken element nested under ListBucketResult.",

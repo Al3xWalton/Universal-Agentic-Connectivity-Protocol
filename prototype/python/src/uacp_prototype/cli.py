@@ -63,7 +63,7 @@ def _cmd_ingest_openapi(args: argparse.Namespace) -> int:
         return 1
 
     artifact_dict = {
-        "$schema": "https://uacp.spec/v1/schema.json",
+        "$schema": "https://raw.githubusercontent.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol/v1.0.0/schemas/uacp.json",
         "authentication": {
             "method": "oauth2_authorization_code",
             "authorization_endpoint": "REPLACED — set after ingestion",

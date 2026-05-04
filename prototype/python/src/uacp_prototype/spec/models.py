@@ -7,9 +7,11 @@ rules; semantic rules (bidirectional path-parameter, embedded-credential
 detection, $ref-local-only) are checked by `loader.validate_artifact`
 after pydantic parsing.
 
-The canonical placeholder $schema URL until Stage 9 freeze is
-``https://uacp.spec/v1/schema.json``. Artifacts pinning this URL today
-are re-pinnable at freeze without semantic change.
+The canonical $schema URL is pinned at the v1.0.0 tag of the spec
+repo's ``schemas/uacp.json`` artifact (see ``DEFAULT_SCHEMA_URL``).
+v1.x revisions reuse the v1.0.0 tag URL because the wire format
+is forward-compatible within the major; v2 will publish a different
+URL when it lands.
 """
 
 from __future__ import annotations
@@ -27,8 +29,8 @@ from pydantic import (
 )
 
 
-# Stage 9 placeholder per §3.10 / §7.1. Not the canonical URL.
-DEFAULT_SCHEMA_URL = "https://uacp.spec/v1/schema.json"
+# §3.10 / §7.1 canonical $schema URL — pinned at v1.0.0 spec freeze.
+DEFAULT_SCHEMA_URL = "https://raw.githubusercontent.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol/v1.0.0/schemas/uacp.json"
 
 # §3.1 charset for operation `id` and tag values.
 ID_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,127}$")
