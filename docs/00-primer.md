@@ -30,7 +30,7 @@ The remaining definitions in this section are specific to UACP.
 
 **Wire Format.** The `Wire Format` is the on-disk and on-wire representation of UACP artifacts. UACP defines a single wire format (see [Document Conventions](#document-conventions)) and assigns it a branded MIME type and file extension. Implementations MUST NOT define alternative wire formats and call them UACP.
 
-**Conformance.** A `Conforming Implementation` is one that satisfies every `MUST` in the canonical specification documents and behaves consistently with every `SHOULD`. The conformance test suite is a [Stage 8](./08-conformance.md) deliverable (forthcoming) that exercises the `MUST` requirements of every prior stage. An implementation that fails any `MUST` is non-conforming, regardless of how the failure presents.
+**Conformance.** A `Conforming Implementation` is one that satisfies every `MUST` in the canonical specification documents and behaves consistently with every `SHOULD`. Each specification stage carries its own conformance summary (§2.9, §3.11, §4.9, §5.7, §6.9, §7.7), aggregated in SPEC.md.. An implementation that fails any `MUST` is non-conforming, regardless of how the failure presents.
 
 ## Scope
 
