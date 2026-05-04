@@ -12,6 +12,7 @@ dependencies = [
     "pydantic>=2.9",
     "cryptography>=43",
     "jsonschema>=4.23",
+    "mcp>=1.0",
 ]
 
 [project.optional-dependencies]
@@ -35,8 +36,9 @@ packages = ["src/uacp_prototype"]
 testpaths = ["tests"]
 markers = [
     "integration: tests that hit real provider APIs and require operator-supplied OAuth credentials (skipped by default; run with `pytest -m integration`)",
+    "mcp_integration: tests that spawn the MCP server as a subprocess and connect via the MCP Python SDK; require the mcp package installed but no real provider credentials (skipped by default; run with `pytest -m mcp_integration`)",
 ]
-addopts = "-ra --strict-markers -m 'not integration'"
+addopts = "-ra --strict-markers -m 'not integration and not mcp_integration'"
 filterwarnings = [
     "error",
     "ignore::DeprecationWarning",
