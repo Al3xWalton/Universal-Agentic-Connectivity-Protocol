@@ -87,7 +87,7 @@ The UACP specification is composed of the documents under `docs/`, indexed by st
 |---|---|---|---|
 | 0 | [`00-primer.md`](./00-primer.md) | Complete (this document) | Abstract, terminology, scope, prior-art comparison, document conventions. |
 | 1 | [`01-principles.md`](./01-principles.md) | Complete | Foundational design principles that constrain every later stage. |
-| 2 | `02-authentication.md` | Pending | Authentication subsystem: core methods, extension mechanism, credential storage rules. |
+| 2 | [`02-authentication.md`](./02-authentication.md) | Complete | Authentication subsystem: core methods, extension mechanism, credential storage rules. |
 | 3 | `03-schema.md` | Pending | Schema layer: `.uacp` artifact shape, JSON Schema profile, validation rules. |
 | 4 | `04-dispatch.md` | Pending | Dispatch runtime: invocation surface, parameter binding, transport rules, error normalization. |
 | 5 | `05-lifecycle.md` | Pending | Connection lifecycle: creation, refresh, revocation, observability. |
