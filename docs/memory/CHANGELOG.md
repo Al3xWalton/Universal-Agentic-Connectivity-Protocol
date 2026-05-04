@@ -612,3 +612,78 @@ This memory commit will land on top of `0a3f4be`. The `v1.0.0` git tag is create
 ### UACP commit plan
 
 5 prototype/spec commits already landed. Single memory commit — `memory: UACP Stage 9 — v1.0 spec freeze + MCP composition validation`. Then `git tag -a v1.0.0 -m "..."`. Operator pushes manually.
+
+## 2026-05-05 — Stage 11.0 — UACP repo
+
+First non-breaking minor release on top of the v1.0.0 freeze. Six spec/prototype/docs commits + this memory commit + the `v1.1.0` git tag (created locally on the memory commit, not pushed). Stage 10 (production reference implementation in AVA) was paused while Stage 11.0 strengthened the protocol's universality story; Stage 11.1+ (capture-flow implementation) is queued behind this release.
+
+### Spec amendments (additive per §7.2)
+
+- **§3.12 Session capture** — new schema source sibling to §3.6 / §3.7 / §3.8. Records HTTP traffic from a browser-demonstrated session and infers `.uacp` operations from the recorded requests. Canonical pairing with §2.10 session_cookie auth: captured cookies become connection credentials, captured requests become the operation set. Subsections: overview, capture format (HAR-recommended), operation inference rules (clustering by endpoint+method, path-parameter extraction, parameter-required-by-frequency, LLM refinement per §3.8), provenance (source.type=capture + captured_at + user_intent + capture_ref + reviewed_at), user review (MUST gate parallel to §3.8), capture infrastructure (Playwright / DevTools / mitmproxy all conforming), conformance (MAY support).
+- **§3.9 priority order updated**: 1. user > 2. curl > 3. **captured session** (NEW) > 4. OpenAPI > 5. LLM-inferred. Capture outranks OpenAPI because the captured request is what the live service actually accepted at the moment of capture.
+- **§3.11 conformance summary** gains a session_capture row (MAY level) plus a new MUST NOT entry mirroring §3.8's review gate.
+- **§4.10 Pluggable transport backends** — codifies the conformance posture under which an implementation MAY substitute different HTTP client libraries per Connection / per auth method / per artifact (via the new optional `dispatch.transport` field). Hard rule from the brief: backend swap is permitted ONLY when §4.1 — §4.9 contract is preserved. Anti-bot evasion is not an excuse for skipping retries (§4.3), ignoring rate limits (§4.5), dropping audit logs (§6.6), or surfacing non-canonical errors (§4.6). Selection mechanism: implementations MAY default to a stealth backend for session_cookie connections (auth-method affinity); artifacts MAY override via `dispatch.transport`. Recommended values: "default", "stealth", or x-namespaced identifiers per §7.3. Implementations that don't recognize the named transport MUST fall back to default with a warning.
+- **§4.9 conformance summary** gains a MAY entry pointing at §4.10.
+
+### Schema changes
+
+- `schemas/uacp.json` `$id` bumped to `v1.1.0`. Title + description updated.
+- New `Source` `oneOf` variant for `type: "capture"` with required `captured_at` + `user_intent` + `capture_ref` + `reviewed_at`. The `capture_ref` field carries a `secret://` URI per §2.7 pointing at the underlying HAR artifact.
+- New optional `dispatch.transport` property on `DispatchConfig` with the recommended-or-x-namespaced regex pattern.
+- Backward-compat verified: every v1.0-shipped example `.uacp` file validates against the v1.1 schema cleanly.
+
+### Status updates
+
+- **SPEC.md retitled v1.1.0**. Status section rewritten to acknowledge v1.0.0 as the underlying baseline + v1.1.0 as the first non-breaking minor release per §7.2. Canonical `$schema` URL pinned at `v1.1.0/schemas/uacp.json`; the v1.0.0 URL continues to resolve indefinitely as a forward-compatible reference.
+- **`docs/00-primer.md` Status section** flipped from v1.0.0 to v1.1.0 with the same non-breaking-extension framing. Per-stage status table inside the primer flipped to mention §3.12 / §4.10 in the §3 / §4 rows.
+
+### Prototype implementation
+
+- **`prototype/python/src/uacp_prototype/dispatch/transport.py`** — new module exposing the `Transport` Protocol (minimal `request(method, url, *, headers, content, timeout) -> httpx.Response` + `close()` surface), `HttpxTransport` (default), `ScraplingTransport` (optional, lazy-imports Scrapling so prototype runs without `stealth` extras; Camoufox-driven; refuses non-HTTPS at the transport boundary; re-raises backend errors as httpx exceptions per §4.10's "Backend-specific exception types MUST NOT leak past the dispatch boundary" rule), `ScraplingNotInstalledError`, `is_scrapling_available()` helper, and `select_transport_for_artifact(artifact)` implementing the §4.10 decision tree.
+- **`dispatch/client.py`** refactored to route requests through `self._transport`. The pre-v1.1 `httpx_client=` parameter is kept as a back-compat alias (wrapped into HttpxTransport implicitly); a new `transport=` parameter takes precedence. A small `_TransportGetAdapter` wraps the transport for auth helpers (e.g. session_cookie's refresh_csrf) that expect a `.get(url, headers)`-shaped client — keeping the §4.10 posture coherent across dispatch + refresh paths.
+- **`dispatch/pagination.py`** link-header next-page request also routes through `client.transport`.
+- **MCP server's `build_dispatch_client_default` factory** calls `select_transport_for_artifact(artifact)` and passes the result to DispatchClient.
+- **NotebookLM example artifacts** updated with `dispatch.transport: "stealth"` to declare their affinity explicitly.
+- **`pyproject.toml`** gains the optional `stealth` dependency group (`scrapling>=0.3`) + a new `scrapling` pytest marker.
+- **`prototype/python/README.md`** NotebookLM section gains the `uv sync --extra stealth` step + a description of the trade-offs (best-effort, §2.10 ToS + §6.6 audit obligations preserved regardless of which transport carries the bytes); MCP composition section gains a "Transport selection (v1.1)" subsection documenting the four-step decision tree.
+
+### Tests
+
+- **`prototype/python/tests/unit/test_transport.py`** ships 18 tests in default-suite + 1 marked `@pytest.mark.scrapling` (skipped by default, opt-in with `pytest -m scrapling` after `uv sync --extra stealth`). Tests cover Protocol membership, HttpxTransport behavior (respx-verified), default-selection, back-compat httpx_client= alias, ScraplingTransport graceful failure when extras missing, .uacp transport-field round-trip through the spec loader, HTTPS-only at the transport boundary, the §4.10 selection decision tree (explicit "default", explicit "stealth" fallback when extras missing, unknown identifier graceful fallback, session_cookie auth-method affinity, NotebookLM-examples-declare-stealth fixture verification).
+- **Test count after Stage 11.0**: **452 unit tests passing** (434 v1.0.0 baseline + 18 transport tests), **34 integration tests deselected by default** (25 provider integration + 8 MCP integration + 1 scrapling-marked test), 0 failures. Run wall ~0.62s.
+
+### Word counts
+
+§3.12 ≈ 870 words; §4.10 ≈ 740 words; SPEC.md 918 words; RELEASE-v1.1.0.md 1251 words.
+
+### Spec gaps surfaced
+
+ZERO. v1.1 is purely additive — every v1.0 conformance rule is preserved, every new section is at MAY-level. No conflicts with v1.0 surfaced during the amendment.
+
+### Hard rules honored
+
+- Spec amendments are additive — §3.6/§3.7/§3.8 substance is unchanged; only §3.9 priority order + §3.11 conformance row + a §3.11 MUST NOT cross-reference were edited.
+- Scrapling integration is OPT-IN. Default behavior (no extras installed, no .uacp override) is unchanged. Existing tests pass without Scrapling installed.
+- Capture-flow implementation deferred to Stage 11.1+ as the brief required.
+- v1.0 commits stay frozen; v1.1 built on top.
+- §4.10 explicitly preserves §4.1 — §4.9 conformance for any transport.
+- Did not push the repo or tag.
+
+### UACP commit chain on top of `fc3d923` (v1.0.0 tag commit / Stage 9 memory tip)
+
+- `f9b72be feat(spec): §3.12 — session_capture schema source (v1.1)`
+- `1b0e9fe feat(spec): §4.10 — pluggable transport backends (v1.1)`
+- `7c5db9f feat(spec): v1.1 status flags + SPEC.md update`
+- `39ed970 feat(prototype): pluggable transport abstraction (httpx + Scrapling)`
+- `231e08a feat(prototype): wire ScraplingTransport for session_cookie connections`
+- `3d300bf docs: v1.1.0 release notes`
+
+This memory commit will land on top of `3d300bf`. The `v1.1.0` git tag is created locally pointing at the memory commit.
+
+### Operator action items
+
+(1) push the local commits to `origin/main` (six commits + memory commit on top of `fc3d923`); (2) push the `v1.1.0` tag (`git push origin v1.1.0`); (3) optionally create a GitHub release for v1.1.0 using the drafted notes from `RELEASE-v1.1.0.md`. Stage 9's operator action items (push v1.0.0 commits + tag + make repo public) remain valid prerequisites if not yet completed.
+
+### UACP commit plan
+
+6 prototype/spec/docs commits already landed. Single memory commit — `memory: UACP Stage 11.0 — session_capture spec + Scrapling transport`. Then `git tag -a v1.1.0 -m "..."`. Operator pushes manually.
