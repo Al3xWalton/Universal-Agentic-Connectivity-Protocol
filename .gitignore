@@ -1,0 +1,18 @@
+# macOS
+.DS_Store
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Local notes that aren't part of the spec
+.scratch/
+NOTES.local.md
+
+# Build output (none expected for a markdown-spec repo, but reserved)
+build/
+dist/
+.cache/
