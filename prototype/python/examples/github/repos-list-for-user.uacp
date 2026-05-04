@@ -1,0 +1,144 @@
+{
+  "$schema": "https://uacp.spec/v1/schema.json",
+  "name": "github-repos-list-for-user",
+  "version": "0.1.0",
+  "description": "GitHub List Repositories for User — list public repositories owned by a user. RFC 8288 link-header paginated; the dispatcher follows rel=\"next\" until the header omits a next relation.",
+  "authentication": {
+    "method": "api_key_header",
+    "header_name": "Authorization",
+    "header_prefix": "Bearer ",
+    "key_ref": "secret://local-keyring/github#token"
+  },
+  "dispatch": {
+    "base_url": "https://api.github.com",
+    "default_headers": {
+      "Accept": "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28"
+    },
+    "default_timeout_ms": 30000,
+    "default_user_agent": "uacp-prototype/0.1"
+  },
+  "definitions": {
+    "Repository": {
+      "type": "object",
+      "properties": {
+        "id": {"type": "integer"},
+        "name": {"type": "string"},
+        "full_name": {"type": "string"},
+        "private": {"type": "boolean"},
+        "html_url": {"type": "string"},
+        "description": {"type": "string"},
+        "fork": {"type": "boolean"},
+        "language": {"type": "string"},
+        "stargazers_count": {"type": "integer"},
+        "updated_at": {"type": "string"}
+      }
+    },
+    "ErrorEnvelope": {
+      "type": "object",
+      "properties": {
+        "message": {"type": "string"},
+        "documentation_url": {"type": "string"}
+      }
+    }
+  },
+  "operations": [
+    {
+      "id": "repos_list_for_user",
+      "summary": "List public repositories owned by a GitHub user.",
+      "description": "GET /users/{username}/repos. Returns a JSON array of repositories. Pagination is link-header per RFC 8288; the response carries Link: <...?page=2>; rel=\"next\", <...?page=N>; rel=\"last\" on truncated pages, and omits the next relation on the final page. The dispatcher follows rel=\"next\" automatically; per_page caps at 100.",
+      "tags": ["github", "repos", "read"],
+      "idempotency": "idempotent",
+      "request": {
+        "method": "GET",
+        "path": "/users/{username}/repos",
+        "path_parameters": {
+          "type": "object",
+          "required": ["username"],
+          "properties": {
+            "username": {
+              "type": "string",
+              "description": "GitHub username (login) of the user whose repos to list."
+            }
+          }
+        },
+        "query_parameters": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["all", "owner", "member"],
+              "default": "owner",
+              "description": "Filter by repository relationship to the user."
+            },
+            "sort": {
+              "type": "string",
+              "enum": ["created", "updated", "pushed", "full_name"],
+              "default": "full_name"
+            },
+            "direction": {
+              "type": "string",
+              "enum": ["asc", "desc"]
+            },
+            "per_page": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 30,
+              "description": "Results per page; GitHub caps at 100."
+            },
+            "page": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "description": "Page number for the first call. Subsequent pages are followed via Link header rel=next; the dispatcher does not advance this parameter manually."
+            }
+          }
+        }
+      },
+      "response": {
+        "200": {
+          "description": "Page of repositories. The Link response header carries rel=\"next\"+rel=\"last\" on truncated pages, omits rel=\"next\" on the final page.",
+          "body": {
+            "media_type": "application/json",
+            "schema": {
+              "type": "array",
+              "items": {"$ref": "#/definitions/Repository"}
+            }
+          },
+          "headers": {
+            "type": "object",
+            "properties": {
+              "Link": {
+                "type": "string",
+                "description": "RFC 8288 Link header carrying pagination relations."
+              }
+            }
+          }
+        },
+        "404": {
+          "description": "User not found.",
+          "body": {
+            "media_type": "application/json",
+            "schema": {"$ref": "#/definitions/ErrorEnvelope"}
+          }
+        },
+        "default": {
+          "description": "GitHub error envelope.",
+          "body": {
+            "media_type": "application/json",
+            "schema": {"$ref": "#/definitions/ErrorEnvelope"}
+          }
+        }
+      },
+      "pagination": {
+        "pattern": "link_header"
+      },
+      "source": {
+        "type": "openapi",
+        "url": "https://docs.github.com/en/rest/repos/repos#list-repositories-for-a-user",
+        "ingested_at": "2026-05-04T05:00:00Z"
+      }
+    }
+  ]
+}

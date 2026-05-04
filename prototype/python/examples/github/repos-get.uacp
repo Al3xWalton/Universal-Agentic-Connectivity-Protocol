@@ -1,0 +1,114 @@
+{
+  "$schema": "https://uacp.spec/v1/schema.json",
+  "name": "github-repos-get",
+  "version": "0.1.0",
+  "description": "GitHub Get a Repository — fetch metadata for a single repository by owner+repo. Authenticates with a Personal Access Token (PAT) carried in Authorization: Bearer. GitHub's three PAT formats (ghp_, github_pat_, gho_) all use the same wire shape; UACP doesn't distinguish them.",
+  "authentication": {
+    "method": "api_key_header",
+    "header_name": "Authorization",
+    "header_prefix": "Bearer ",
+    "key_ref": "secret://local-keyring/github#token"
+  },
+  "dispatch": {
+    "base_url": "https://api.github.com",
+    "default_headers": {
+      "Accept": "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28"
+    },
+    "default_timeout_ms": 30000,
+    "default_user_agent": "uacp-prototype/0.1"
+  },
+  "definitions": {
+    "Repository": {
+      "type": "object",
+      "description": "Subset of GitHub's repository object — fields the agent typically consumes.",
+      "properties": {
+        "id": {"type": "integer"},
+        "node_id": {"type": "string"},
+        "name": {"type": "string"},
+        "full_name": {"type": "string"},
+        "private": {"type": "boolean"},
+        "owner": {"type": "object"},
+        "html_url": {"type": "string"},
+        "description": {"type": "string"},
+        "fork": {"type": "boolean"},
+        "default_branch": {"type": "string"},
+        "stargazers_count": {"type": "integer"},
+        "watchers_count": {"type": "integer"},
+        "forks_count": {"type": "integer"},
+        "open_issues_count": {"type": "integer"},
+        "language": {"type": "string"},
+        "archived": {"type": "boolean"},
+        "disabled": {"type": "boolean"},
+        "visibility": {"type": "string"},
+        "pushed_at": {"type": "string"},
+        "created_at": {"type": "string"},
+        "updated_at": {"type": "string"}
+      }
+    },
+    "ErrorEnvelope": {
+      "type": "object",
+      "description": "GitHub's standard error envelope.",
+      "properties": {
+        "message": {"type": "string"},
+        "documentation_url": {"type": "string"},
+        "status": {"type": "string"}
+      }
+    }
+  },
+  "operations": [
+    {
+      "id": "repos_get",
+      "summary": "Fetch a single GitHub repository by owner and name.",
+      "description": "GET /repos/{owner}/{repo}. Returns 200 with the repository object on success, 404 if the repo doesn't exist or the authenticated user lacks read access. Idempotent and read-only.",
+      "tags": ["github", "repos", "read"],
+      "idempotency": "idempotent",
+      "request": {
+        "method": "GET",
+        "path": "/repos/{owner}/{repo}",
+        "path_parameters": {
+          "type": "object",
+          "required": ["owner", "repo"],
+          "properties": {
+            "owner": {
+              "type": "string",
+              "description": "Owner login (user or organization)."
+            },
+            "repo": {
+              "type": "string",
+              "description": "Repository name."
+            }
+          }
+        }
+      },
+      "response": {
+        "200": {
+          "description": "Repository found.",
+          "body": {
+            "media_type": "application/json",
+            "schema": {"$ref": "#/definitions/Repository"}
+          }
+        },
+        "404": {
+          "description": "Repository not found, or authenticated user lacks read access.",
+          "body": {
+            "media_type": "application/json",
+            "schema": {"$ref": "#/definitions/ErrorEnvelope"}
+          }
+        },
+        "default": {
+          "description": "GitHub error envelope.",
+          "body": {
+            "media_type": "application/json",
+            "schema": {"$ref": "#/definitions/ErrorEnvelope"}
+          }
+        }
+      },
+      "source": {
+        "type": "openapi",
+        "url": "https://docs.github.com/en/rest/repos/repos#get-a-repository",
+        "ingested_at": "2026-05-04T05:00:00Z"
+      }
+    }
+  ]
+}

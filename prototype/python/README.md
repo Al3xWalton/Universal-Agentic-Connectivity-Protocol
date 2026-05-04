@@ -47,9 +47,9 @@ uv run uacp ingest-openapi https://www.googleapis.com/discovery/v1/apis/gmail/v1
 
 This prototype satisfies the `MUST` requirements across:
 
-- **Stage 2** (authentication) — OAuth 2.0 authorization-code with PKCE; Slack's workspace-scoped OAuth flavor (Stage 8b, registered as `x-oauth2-workspace` per §7.3 in-development extension); AWS Signature Version 4 per §2.5.1 (Stage 8c, implemented from scratch using only `hashlib` + `hmac` — no boto3 / botocore dependency, validated against AWS-published test vectors); OAuth 2.0 client-credentials, OAuth 2.0 device-code, OAuth 1.0a, HMAC-signature, API-key (header / query), and `custom_auth` are stubs that raise `NotImplementedError` and will be implemented in subsequent provider sessions (Stage 8d, 8e).
+- **Stage 2** (authentication) — OAuth 2.0 authorization-code with PKCE; Slack's workspace-scoped OAuth flavor (Stage 8b, registered as `x-oauth2-workspace` per §7.3 in-development extension); AWS Signature Version 4 per §2.5.1 (Stage 8c, implemented from scratch using only `hashlib` + `hmac` — no boto3 / botocore dependency, validated against AWS-published test vectors); API-key authentication per §2.4 (Stage 8d, both `api_key_header` and the disrecommended `api_key_query` flavors). OAuth 2.0 client-credentials, OAuth 2.0 device-code, OAuth 1.0a, HMAC-signature, and `custom_auth` are stubs that raise `NotImplementedError` and will be implemented in the remaining provider session (Stage 8e).
 - **Stage 3** (schema) — hand-authored canonical JSON loading and OpenAPI 3.x / Google discovery ingestion. `curl`-paste and LLM inference are stubs.
-- **Stage 4** (dispatch) — HTTPS-only, retry policy, pagination patterns (cursor / offset / link_header / none), canonical error shape, rate-limit handling, body-predicate failure detection per §3.3 + §4.6 (Stage 8b — converts 200-with-ok=false envelopes into canonical DispatchErrors), body-format dispatching per §3.3 (Stage 8c — `format` discriminator on response bodies: json / xml / binary / text; XML→dict conversion in stdlib `xml.etree`; JSONPath subset works against XML-derived dicts so cursor pagination resolves nested cursor fields like S3's `$.ListBucketResult.NextContinuationToken`). Streaming is placeholder.
+- **Stage 4** (dispatch) — HTTPS-only, retry policy, pagination patterns (cursor / offset / link_header / none), canonical error shape, rate-limit handling, body-predicate failure detection per §3.3 + §4.6 (Stage 8b — converts 200-with-ok=false envelopes into canonical DispatchErrors), body-format dispatching per §3.3 (Stage 8c — `format` discriminator on response bodies: json / xml / binary / text; XML→dict conversion in stdlib `xml.etree`; JSONPath subset works against XML-derived dicts so cursor pagination resolves nested cursor fields like S3's `$.ListBucketResult.NextContinuationToken`), RFC 8288 conformance for link-header pagination per §3.4 (Stage 8d — case-insensitive rel matching, multi-rel entries, multi-header concatenation, relative URI resolution, link-parameter tolerance, comma-in-brackets / comma-in-quotes handling). Streaming is placeholder.
 - **Stage 5** (lifecycle) — seven-state machine, lazy refresh (the `MUST` floor; proactive refresh is `SHOULD` and not implemented in this prototype), refresh-token rotation handled atomically.
 - **Stage 6** (security) — `secret://` resolver, AES-256-GCM envelope encryption-at-rest, `local-keyring` simulated as a filesystem store at `~/.uacp/secrets/`, master key at `~/.uacp/master.key`. `vault` and `aws-secrets-manager` resolvers raise `NotImplementedError` until corresponding provider sessions land.
 
@@ -140,6 +140,32 @@ The integration tests under `tests/providers/test_aws.py` exercise SigV4 signing
    ```
 
 The five tests are non-destructive (read-only): GetObject success (downloads the test object); GetObject 404 (asserts a 404 DispatchError for a nonexistent key); ListObjectsV2 single page (XML decodes correctly to a dict); ListObjectsV2 paginated (max_pages=3 cap, advances through the bucket if it has more than 2 objects); ListObjectsV2 with prefix filter.
+
+### GitHub integration tests
+
+The integration tests under `tests/providers/test_github.py` exercise `api_key_header` auth (Authorization: Bearer) and RFC 8288 link-header pagination against GitHub's REST API. They are skipped by default; running them requires:
+
+1. **Create a Personal Access Token** at https://github.com/settings/tokens (classic) OR https://github.com/settings/personal-access-tokens (fine-grained). **Fine-grained PATs are recommended** for least-privilege access. A classic PAT works too — both formats land at the wire as `Authorization: Bearer <token>` and UACP doesn't distinguish them.
+
+2. **Token scopes / permissions**:
+   - Public-repo reads only: **no scopes / permissions needed**. GitHub serves public repos without auth, but rate-limits unauth'd calls aggressively (60/hour); a PAT with no scopes raises that to 5,000/hour and is sufficient for the integration tests.
+   - Private-repo reads: `repo` scope (classic) or `Contents: Read` + `Metadata: Read` (fine-grained).
+
+3. **Populate `prototype/python/.env`** with:
+   ```
+   UACP_GITHUB_TOKEN=ghp_...                    # or github_pat_... or gho_...
+   UACP_GITHUB_TEST_USER=octocat                 # any GitHub username
+   UACP_GITHUB_TEST_REPO=octocat/hello-world    # owner/repo string
+   ```
+
+4. **Run the integration tests**:
+   ```bash
+   uv run pytest tests/providers/test_github.py -m integration
+   ```
+
+The five tests are read-only and non-destructive: get_repo_success (fetches a real repository's metadata); get_repo_404 (asserts 404 DispatchError for a nonexistent path); list_repos_for_user_single_page (per_page=100 fits in one page for typical users); list_repos_for_user_paginated (per_page=2 forces multiple pages; max_pages=5 cap exercises the RFC 8288 link-header loop); list_repos_with_link_header_intermediate (validates the dispatcher advances correctly when both rel=next and rel=last are present on an intermediate page).
+
+The default `UACP_GITHUB_TEST_USER=octocat` works for everyone — Octocat is GitHub's mascot account with many public repos suitable for exercising pagination.
 
 ## Spec correspondence
 
