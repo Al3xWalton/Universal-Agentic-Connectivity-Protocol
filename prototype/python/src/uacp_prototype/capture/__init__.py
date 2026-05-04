@@ -21,8 +21,10 @@ Public surface:
     serialization.
   - ``store_capture`` — encrypted-at-rest persistence to the registered
     secret-store registry per §6.2; returns the canonical
-    ``secret://<store>/<id>`` reference. (Lands in Stage 11.1
-    Commit 2.)
+    ``secret://<store>/<id>`` reference.
+  - ``load_capture`` — round-trip companion that decrypts a stored
+    artifact back to a ``CaptureArtifact``; consumed by Stage 11.2's
+    operation-synthesis pass.
 
 Operation synthesis from captures stays out of scope for Stage 11.1
 (it lives in Stage 11.2). This module stops at "the captured artifact
@@ -41,6 +43,12 @@ from .recorder import (
     capture_id_for,
     recover_in_progress,
 )
+from .storage import (
+    SUPPORTED_STORES,
+    StoredCapture,
+    load_capture,
+    store_capture,
+)
 
 __all__ = [
     "BrowserRecorder",
@@ -51,6 +59,10 @@ __all__ = [
     "PlaywrightNotInstalledError",
     "ScraplingBackend",
     "ScraplingCaptureNotInstalledError",
+    "SUPPORTED_STORES",
+    "StoredCapture",
     "capture_id_for",
+    "load_capture",
     "recover_in_progress",
+    "store_capture",
 ]
