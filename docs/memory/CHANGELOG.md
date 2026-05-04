@@ -687,3 +687,90 @@ This memory commit will land on top of `3d300bf`. The `v1.1.0` git tag is create
 ### UACP commit plan
 
 6 prototype/spec/docs commits already landed. Single memory commit — `memory: UACP Stage 11.0 — session_capture spec + Scrapling transport`. Then `git tag -a v1.1.0 -m "..."`. Operator pushes manually.
+
+## 2026-05-05 — Stage 11.1 — UACP repo
+
+Browser-instrumented session capture infrastructure shipped on top of the v1.1.0-frozen §3.12 spec. Three prototype commits + this memory commit. **No tag** — Stage 11.1 is implementation against the frozen spec, not a spec amendment. Stage 11.2 (operation synthesis from captures) consumes Stage 11.1's stored artifacts.
+
+### Capture engine (recorder.py)
+
+- **CaptureArtifact** dataclass with HAR 1.2-compliant `to_har_json()` (storage_state omitted; standard HAR-tool inspectable after explicit decryption) + `to_internal_json()` (full UACP fidelity including storage_state + capture-id + metadata; round-trips via `from_internal_json()`).
+- **HarEntry** dataclass mirroring HAR 1.2's entry shape (started_at, time_ms, request, response). `to_har_dict()` emits canonical camelCase HAR field names; `to_internal_dict()` uses snake_case Python idioms.
+- **`capture_id_for(initial_url, captured_at, provider)`** — deterministic SHA-256 hash truncated to 16 hex chars per §3.12. The same capture session yields the same id across processes.
+- **BrowserRecorder** lifecycle — `start(initial_url)` / `requests_captured()` / `is_alive()` / `disconnect_event()` / `stop() -> CaptureArtifact`. Driver factory injection lets tests run without any browser binary; `idempotent stop()` returns the cached artifact on repeated calls.
+- **PlaywrightBackend** (default) — lazy-imports `playwright.sync_api` so the prototype runs without the optional `capture` extras installed. Wires `page.on("request")` + `page.on("response")` events; surfaces browser-disconnect via a `threading.Event` the CLI awaits alongside stdin. HTTPS-only navigation per §4.2 enforced by surfacing PlaywrightCaptureError when the initial URL is unreachable.
+- **ScraplingBackend** — per the brief's explicit fallback affordance ("Scrapling's browser API is dispatch-only as of v0.3"), this transparently delegates to PlaywrightBackend after verifying the `stealth` extras are at least installed. Logs an INFO note that the captured fingerprint is Playwright's rather than Scrapling's. Stage 11.0's ScraplingTransport for *dispatch* still uses Scrapling's stealth posture for replay.
+- **Resilience**: every 30s the recorder flushes its in-progress capture to `~/.uacp/captures/in-progress/<id>.har.tmp` (mode 0600, plaintext, deleted on clean stop). `recover_in_progress(capture_id)` reads the checkpoint after a mid-session crash; `_write_checkpoint` is exposed for testing the resilience path without waiting for the daemon thread.
+- **§6.6 audit emit** — `capture started` (id + backend + initial_url) and `capture stopped` (id + request count + duration_ms) events at INFO level on the `uacp.capture` logger. Audit payloads carry only URL pattern + counts + duration — never captured cookies, Authorization values, or storage_state contents. `_scrub_for_audit()` redacts known auth-bearing header names case-insensitively (Authorization, Cookie, Set-Cookie, Proxy-Authorization, X-Auth-Token, X-Csrf-Token, X-XSRF-TOKEN, X-API-Key, X-Goog-AuthUser) for any future audit-emit path. `_audit_url_pattern()` strips query strings + replaces numeric path segments with `:id` for audit-event grouping.
+
+### Encrypted-at-rest storage (storage.py)
+
+- **`store_capture(artifact, *, secret_store="local-keyring", storage_id=None, base_dir=None) -> StoredCapture`** — composes on the existing `security/secrets.LocalKeyringStore.put()` which already does §6.3 envelope encryption (per-blob DEK wrapped by master KEK at `~/.uacp/master.key`; AES-256-GCM ciphertext on disk). The §3.12 mandate "MUST be encrypted before persistence" satisfied by reuse rather than reinvention.
+- **`storage_id` kwarg** — optional override that lets the CLI honor the operator's `--output secret://...` URI verbatim while keeping auto-id-derivation as the default for programmatic callers. Default is `f"capture-{artifact.capture_id}"`.
+- **`StoredCapture`** frozen dataclass — `ref` (the canonical `secret://<store>/<id>` reference §3.12 expects to land in `source.capture_ref`) + parsed components (store, capture_id, request_count, duration_ms).
+- **`load_capture(ref, *, base_dir=None) -> CaptureArtifact`** — round-trip companion that decrypts the stored artifact back to the typed model. Stage 11.2's operation-synthesis pass consumes this path.
+- **§6.6 audit emit** at the persistence boundary — `capture stored` event with ref + capture id + request count + duration_ms + URL host. Verified to NOT leak cookies / Authorization values / storage_state contents.
+
+### CLI (capture-session)
+
+- **`uacp capture-session --initial-url <url> --output <secret-ref> [--browser playwright|scrapling] [--provider <name>]`** — the new top-level subcommand. Default browser is Playwright per the brief.
+- **`_validate_secret_ref()`** — parse + validate the `--output` URI. Rejects missing scheme / unsupported store / `#field` selector with exit code 2 and clear error messages.
+- **`_await_user_signal_or_browser_close()`** — blocks until Enter is pressed (returns `user_stop`) or the browser disconnects (returns `browser_closed`); prints live progress every 5s. Disconnect check fires BEFORE Enter check so the disconnect path takes precedence in the EOF-vs-disconnect race the empty-stdin test fixture creates. Tests inject mocked stdin / stdout / sleep / time so the loop is deterministic.
+- **`_run_capture_session()`** — full orchestration with SIGINT/SIGTERM handlers (mark the recorder's disconnect event so partial artifacts persist), browser-disconnect handling ("Browser closed; finalizing capture..." prompt), unreachable-URL handling (CaptureError → exit code 3 instead of storing an empty artifact), stop-failure handling (exit code 4), persistence-failure handling (exit code 5). Signal handlers restore prior dispositions before stop() runs so cleanup errors don't loop back through the handler.
+- **README** new section "Session capture (v1.1)" covering Privacy/ToS callout (§2.10 ToS posture extends to capture-driven discovery; the prototype encrypts at rest and never transmits off-device but the user is responsible for what they capture), Playwright install steps, the CLI invocation flow, what the artifact contains (HAR + storage_state + metadata), the deterministic capture_id rule, resilience (30s checkpoint + recover_in_progress + signal handlers), the §6.6 audit-trail field set with auth-value scrubbing guarantee, the forward reference to Stage 11.2's operation synthesis pass, and the capture-integration test invocation.
+
+### Live demonstration
+
+```
+$ uv run python -m uacp_prototype.cli capture-session \\
+    --initial-url https://httpbin.org/anything?demo=stage11 \\
+    --output secret://local-keyring/stage11-demo-capture \\
+    --provider httpbin-demo
+Opening https://httpbin.org/anything?demo=stage11 in a browser. ...
+  Captured 0 request(s) so far...
+Captured 1 request(s) over 6.7s. Persisting...
+Capture stored at secret://local-keyring/stage11-demo-capture. ...
+```
+
+The persisted blob is a 3189-byte mode-0600 AES-256-GCM ciphertext at `~/.uacp/secrets/stage11-demo-capture.enc`. `load_capture()` round-trips back to `capture_id=b16994de20ac5002` with the GET against `httpbin.org/anything?demo=stage11` (status 200) plus the storage_state. The on-disk content does not contain the captured URL or response body in plaintext — verified by inspection.
+
+### Tests
+
+- **27 recorder tests** in `tests/unit/test_capture_recorder.py` — lifecycle (start → events → stop → artifact), capture-id determinism, non-HTTP URL rejection, start-twice / stop-before-start / stop-idempotent guards, HAR 1.2 emission shape, internal-json round-trip, storage_state omission from HAR / inclusion in internal, default backend (Playwright), unknown-backend rejection, extras-missing remediation errors for both backends (one self-skips when extras are present), browser-disconnect event firing, checkpoint resilience (write + recover + cleanup + corrupt-checkpoint), audit-event emission, scrub-helper redacting known auth headers, URL-pattern stripping query strings + numeric segments.
+- **14 storage tests** in `tests/unit/test_capture_storage.py` — round-trip (store + load), SecretURI parsing, encryption-at-rest verification (the on-disk blob is AES-256-GCM ciphertext; captured URL + storage_state values do NOT appear), deeply-nested base_dir creation, idempotent stores producing the same ref, different inputs producing different refs, unsupported-store rejection, load-of-missing rejection, load-of-corrupt rejection (AES-GCM tag mismatch), empty-capture_id rejection, capture-stored audit event emission, audit not leaking auth, recorder→storage end-to-end with FakeDriver.
+- **16 CLI tests** in `tests/unit/test_capture_cli.py` — secret-ref validation, the await loop (Enter / disconnect / progress), orchestration end-to-end (persists at right URI, browser-disconnect, start failure, stop failure), main() argument parsing.
+- **2 capture_integration tests** in `tests/integration/test_capture_session_live.py` (skipped by default) — live Playwright + httpbin.org capture round-trip + unreachable-URL rejection. Verified to pass on this machine after `uv sync --extra capture && uv run playwright install chromium`.
+
+### Test count after Stage 11.1
+
+**508 passed + 1 skipped** (the playwright-not-installed self-skip when capture extras are present), **36 deselected by default** (25 provider integration + 8 MCP integration + 1 scrapling-marked + 2 NEW capture_integration). 0 failures. Run wall ~0.74s.
+
+### Spec gaps surfaced
+
+ZERO. Stage 11.1 is implementation only — no spec content changed.
+
+### Hard rules honored
+
+- Did not implement operation synthesis (Stage 11.2 territory — explicitly deferred per the brief).
+- Captured artifacts MUST be encrypted at rest with no plaintext fallback (verified).
+- Audit events scrub auth values (verified twice — recorder-side `test_audit_payloads_do_not_log_auth_headers` + storage-side `test_capture_stored_audit_event_does_not_leak_auth`).
+- Default backend is Playwright (Scrapling is optional and falls back per the brief's explicit affordance).
+- Did not change Stage 11.0's spec.
+- Did not push the repo or any tag.
+- Did not write the operation synthesis flow.
+
+### UACP commit chain on top of `2b1ba64` (Stage 11.0 memory tip + v1.1.0 tag)
+
+- `f0b0ad8 feat(prototype): browser capture recorder (Playwright + Scrapling backends)`
+- `ead0ceb feat(prototype): encrypted-at-rest capture storage`
+- `7962c24 feat(prototype): uacp capture-session CLI command`
+
+This memory commit will land on top of `7962c24`. **No tag this session.**
+
+### Operator action items
+
+Push the three prototype commits + this memory commit to `origin/main`. No tag — Stage 11.1 is implementation against the frozen v1.1.0 spec, not a spec amendment. Stage 9 + 11.0 prerequisites remain valid if not yet done.
+
+### UACP commit plan
+
+3 prototype commits already landed. Single memory commit — `memory: UACP Stage 11.1 — browser capture infrastructure`. **No tag.** Operator pushes manually.
