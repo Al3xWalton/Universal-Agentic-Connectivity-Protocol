@@ -6,6 +6,19 @@ This document records the governance posture of UACP from `v1.0.0` (frozen 2026-
 
 UACP `v1.x` evolves under the stewardship of its maintainer. `v2` and beyond will follow a public RFC process if and when the protocol's user base justifies one. Until that point, all design discussion happens in public — in this repository's issues and pull requests — and outside contributions follow the rules in [`CONTRIBUTING.md`](./CONTRIBUTING.md).
 
+## How to influence `v1.x` evolution
+
+`v1.x` is **stable**. The wire format, the registered identifier sets across §2.1 / §3.4 / §6.2 / §7.3, the conformance vocabulary, and the canonical `$schema` URL pinned at each minor release are frozen for the rest of `v1.x`. Within those constraints, `v1.x` continues to grow:
+
+- **New auth methods** — register additional `Authentication Method`s through the §2.8 mechanism. File a `[RFC v1.x]`-prefixed issue with the wire shape, the conformance posture, and at least one real provider exercising it.
+- **New pagination patterns** — keyset, page-number, timestamp-windowed, and similar patterns are non-breaking additions to §3.4. Same proposal path.
+- **New secret-store types** — additional §6.2 secret-store identifiers (cloud-specific managers, K8s secrets, HSM-backed stores) follow the same registration mechanism.
+- **New transport backends** — §4.10 opened the door for pluggable HTTP backends. Implementation-specific transports MAY use `x-`-namespaced identifiers per §7.3 without a registry change; promoting a backend identifier into the registered set is a `[RFC v1.x]` proposal.
+- **Editorial fixes** — typos, broken links, formatting, ambiguity-removing rephrasing without semantic change. Land directly as PRs per [`CONTRIBUTING.md`](./CONTRIBUTING.md).
+- **New conformance MAY items** — clarifying language that adds optional behavior without narrowing existing implementations.
+
+Outside contributors propose; the maintainer decides. Non-breaking additions land as PRs after the issue discussion converges. Breaking changes wait for `v2`.
+
 ## When `v2` becomes worth pursuing
 
 `v2` consideration begins when one of the following thresholds is crossed:

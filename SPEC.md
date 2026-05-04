@@ -4,6 +4,10 @@
 **Status**: **Stable**. This document is the canonical specification index for UACP `v1.1`.
 **Released**: 2026-05-04 (`v1.0.0` freeze) + 2026-05-05 (`v1.1.0`).
 
+## Conformance levels
+
+The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and "OPTIONAL" in this document and every UACP specification document are to be interpreted as described in BCP 14 ([RFC 2119](https://datatracker.ietf.org/doc/html/rfc2119), [RFC 8174](https://datatracker.ietf.org/doc/html/rfc8174)) when, and only when, they appear in all capitals. Lowercase or mixed-case usage is descriptive prose, not normative. A `Conforming Implementation` of UACP `v1.x` satisfies every MUST across every stage and behaves consistently with every SHOULD; the per-stage conformance summaries enumerate the relevant items at each level.
+
 ## Status
 
 `v1.1.0` is the first non-breaking minor release on top of the `v1.0.0` freeze. Per [§7.2](./docs/07-versioning.md), every artifact valid against `v1.0` remains valid against `v1.1`; `v1.1` is a forward-compatible extension. The release adds two new sections: §3.12 (session-capture schema source) and §4.10 (pluggable transport backends). `v2` continues to follow the public RFC process described in [§7.6](./docs/07-versioning.md).

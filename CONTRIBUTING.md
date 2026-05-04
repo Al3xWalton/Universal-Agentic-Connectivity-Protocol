@@ -38,6 +38,14 @@ Pull requests are welcome for:
 
 Pull requests that change normative content — adding, removing, narrowing, or broadening a `MUST` / `SHOULD` / `MAY` — should be preceded by an issue that records the design discussion. Direct PRs against normative content may be closed with a request to open a discussion issue first.
 
+### Commit message convention
+
+Spec edits use the format `fix(spec): <stage> — <description>` for editorial fixes against an already-stable stage (for example, `fix(spec): Stage 4 — repair broken cross-reference to §3.2`), and `feat(spec): v1.x — <description>` for non-breaking additions per [§7.2](./docs/07-versioning.md). Prototype edits use `feat(prototype): <description>` or `fix(prototype): <description>`. Keep the subject line under 70 characters; explain the *why* in the body.
+
+### What makes a good PR description
+
+State the kind of change (editorial fix / clarifying revision / non-breaking addition); summarize the *why* in one or two sentences; for clarifying revisions, state the prior reading, the proposed reading, and the reason the wording is closer to intent; link any related issue. Reviewers should not have to read the diff to understand what the PR is for.
+
 ### Pull-request checklist
 
 - The change is in scope for editorial fixes, clarifying revisions, or editorial reorganization (see above).
@@ -45,10 +53,11 @@ Pull requests that change normative content — adding, removing, narrowing, or 
 - For clarifying revisions, the PR description states the prior reading, the proposed reading, and the reason.
 - The change does not introduce a new normative requirement without a prior issue link.
 - All cross-references and links still resolve.
+- The commit message follows the convention above.
 
 ## Major changes (RFC process)
 
-A major change to UACP — adding a new stage, introducing a new `Authentication Method`, broadening the scope of the protocol, or proposing a `v2` revision — is governed by a public RFC process. The process is documented in [Stage 7 — Versioning](./docs/07-versioning.md), which is itself pending. Until that document is published, major-change proposals SHOULD be filed as issues with the prefix `[RFC]` so they can be promoted into the formal process when it lands.
+A major change to UACP — proposing a `v2` revision, broadening the scope of the protocol beyond HTTPS dispatch, or any change that would render `v1.x`-valid artifacts invalid — is governed by the public RFC process documented in [Stage 7 — Versioning](./docs/07-versioning.md) §7.6. File the proposal as a `[RFC v2]`-prefixed issue with a problem statement; the maintainer decides when the cluster of reports justifies opening the formal process. Non-breaking additions to `v1.x` (new auth methods, new pagination patterns, new secret stores, new transport backends) follow the lighter `[RFC v1.x]` path described in [`GOVERNANCE.md`](./GOVERNANCE.md).
 
 ## Reporting security concerns
 
