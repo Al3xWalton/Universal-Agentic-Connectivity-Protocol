@@ -374,6 +374,23 @@ The default mapping from HTTP status to canonical `code`:
 
 A `Conforming Implementation` MAY refine this mapping using envelope-derived context: a `400` response whose envelope clearly indicates a missing-permission failure SHOULD map to `forbidden` rather than `bad_input`, for example. The mapping defaults are normative as the floor; implementation refinements that produce a more specific (less "default") code from envelope data are permitted and encouraged.
 
+### Body-predicate evaluation
+
+When a response carries a `failure_predicate` per §3.3, the dispatch runtime MUST evaluate the predicate against the response body before treating the response as a logical success. A `Conforming Implementation`:
+
+1. Selects the response entry matching the response's HTTP status per §3.3 (exact match wins over status-range match wins over `default`).
+2. If the matched entry declares `failure_predicate`, parses the response body and resolves `failure_predicate.path` against it per the §3.4 minimal JSONPath subset.
+3. If the resolved value is `failure_predicate.equals` (deep-equal comparison on JSON literals), the response is a logical failure and the runtime constructs the canonical error shape per "The canonical error shape" above. The `status` field carries the original HTTP status verbatim — typically `200` — so audit trails remain faithful; the canonical `code` carries the normalized failure category.
+4. If `failure_predicate.code_path` is declared, the runtime resolves it against the body and includes the extracted string in `details` under its original field name. The runtime SHOULD use the extracted string as input to the `code` mapping per "`code` mapping" above's MAY refinement clause — typically a small per-`Provider` lookup table that converts the `Provider`-specific error string into the canonical Principle 8 vocabulary.
+5. If `failure_predicate.message_path` is declared, the runtime resolves it and uses the extracted string as the canonical `message` field. When absent, the runtime synthesizes a message from the HTTP status, the extracted `code`, and the body.
+6. If the resolved value at `failure_predicate.path` is missing or does not equal `failure_predicate.equals`, the response is a logical success and the runtime proceeds with the existing 2xx-success path. A missing field is a non-match, NOT a parse error.
+
+When the response body is not parseable as JSON (the `Content-Type` doesn't match the declared `body.media_type`, or the body is malformed), the runtime falls back to the existing 2xx-success path and surfaces the unparsed body to the caller. A predicate cannot be evaluated against a non-JSON body; the spec leaves this case to the unmatched-envelope path rather than raising at dispatch time.
+
+The predicate is opt-in per response entry. Operations whose responses don't declare `failure_predicate` retain the existing status-only success/failure behavior — the predicate machinery is purely additive.
+
+This affordance was added in the `v1.x` release that includes the §3.3 amendment. Per Principle 6 (wire-format stability), absence of `failure_predicate` is the default; `Conforming Implementation`s built against earlier `v1.x` releases that pre-date the amendment MAY decline artifacts that declare `failure_predicate` per §2.8 silent-decline rules, but SHOULD upgrade to consume the field given how common the body-shape failure pattern is in practice.
+
 ### What error handling does not do
 
 Recovery — refresh-then-retry on `auth_expired`, scope-elevation on `forbidden`, surfacing rate-limit waits to the user — is **Stage 5 (lifecycle)** for the `auth_expired` path and is the agent's application-layer concern for the others. This stage produces the canonical failure; what to do with it is upstream of the runtime.

@@ -229,6 +229,42 @@ A `.uacp` artifact SHOULD declare these envelopes under the appropriate status r
 
 The `oneOf` pattern is appropriate when the same status range carries more than one envelope shape (success-with-warnings vs. structured-error, for example).
 
+### Body-predicate failure detection
+
+Some `Provider`s return both logical success and logical failure under the same HTTP status — typically `200` — and discriminate via the response body. Slack's API is the canonical example: every response is wrapped in `{"ok": true | false, ...}` with HTTP `200` regardless of logical outcome. GraphQL-shaped APIs follow a similar pattern with a top-level `errors` array on success-status responses; several enterprise APIs use `{"success": false, ...}` envelopes; some legacy financial APIs emit a status-code-bearing field inside the body that diverges from the HTTP status.
+
+When `Provider` shape requires it, a response entry MAY declare a `failure_predicate` field. The predicate is a body-shape signal that converts the response from a logical success into a logical failure even when the HTTP status would otherwise indicate success.
+
+```json
+"200": {
+  "description": "Slack envelope. ok=true on logical success, ok=false on logical failure.",
+  "body": {
+    "media_type": "application/json",
+    "schema": {"type": "object"}
+  },
+  "failure_predicate": {
+    "path": "$.ok",
+    "equals": false,
+    "code_path": "$.error"
+  }
+}
+```
+
+Field semantics:
+
+- **`path`** (required, string) — a JSONPath expression in the same minimal subset as §3.4: `$.field` and `$.field.subfield`. Resolves against the parsed response body.
+- **`equals`** (required, any JSON literal) — the value that, when matching the resolved value at `path`, indicates logical failure.
+- **`code_path`** (optional, string) — a JSONPath in the same subset, resolved against the body to extract a `Provider`-specific error string (Slack's `$.error`, GraphQL's `$.errors[0].extensions.code` shape — though full array indexing is out of `v1.0`'s subset and SHOULD use a flattened `Provider`-specific shape until a future `v1.x` release registers an extension). The extracted string is consumed by §4.6's canonical-error mapping.
+- **`message_path`** (optional, string) — a JSONPath for extracting a human-readable failure message included in the canonical error's `message` field per §4.6.
+
+Predicates evaluate at dispatch time per §4.6. A predicate match converts the response into the canonical failure shape; a non-match leaves the response as logical success and the runtime proceeds with the existing 2xx-success path. Without a `failure_predicate` declared, the dispatcher's existing status-based success/failure decision is unchanged — the predicate is opt-in per response entry.
+
+A predicate `path` that resolves to a missing value is a non-match. The runtime does NOT raise on missing fields; only an exact match between the resolved value and `equals` triggers the failure path. Authors who want stricter semantics SHOULD declare the field as required in the response body's JSON Schema; the body-schema validation is independent of the predicate.
+
+The body-predicate machinery is intentionally minimal in `v1.0`. Predicates with multiple conditions (`AND`/`OR` combinators), regex matching, or numeric comparisons are out of scope. A `Provider` whose failure signal requires combinator logic SHOULD use multiple response entries with distinct `failure_predicate`s and rely on §3.3's response-key resolution to route correctly. Future `v1.x` releases MAY register additional predicate operators through §2.8.
+
+The `oneOf` pattern is appropriate when the same status range carries more than one envelope shape (success-with-warnings vs. structured-error, for example).
+
 ## 3.4 Pagination metadata
 
 When an `Operation` paginates, the `Operation` declares the pagination pattern via the `pagination` object. The dispatch runtime uses the pattern declaration to know how to advance between pages and where in the response the next-page identifier lives; the runtime's loop-control behavior (when to stop, how many pages to fetch by default, how to surface partial results to the agent) is Stage 4's responsibility.
