@@ -217,9 +217,67 @@ When a status key collides with a range or `default`, the more specific key wins
 Each value under a status key is an object with the following fields:
 
 - **`description`** (required, string) — a one-sentence human-readable description of what the response represents. Like `summary` on the operation itself, the description is read by agents and authoring tools.
-- **`body`** (optional) — the response body's JSON Schema and media type, in the same shape as `request.body` (§3.2): either `"none"`, an inline `{"media_type": ..., "schema": ...}`, or a `$ref` into local `definitions`. When omitted, the response body is treated as opaque (the dispatch runtime may pass it through but does not validate or extract from it).
+- **`body`** (optional) — the response body's media type, format, and schema, in the same shape as `request.body` (§3.2): either `"none"`, an inline `{"media_type": ..., "format": ..., "schema": ...}`, or a `$ref` into local `definitions`. When omitted, the response body is treated as opaque (the dispatch runtime may pass it through but does not validate or extract from it). The `format` field is documented separately in [Body format](#body-format) below.
 - **`headers`** (optional, object) — a JSON Schema describing response headers the agent may want to read. Headers used by the dispatch runtime for control-flow purposes (for example, the RFC 8288 `Link` header consumed by `link_header` pagination per §3.4) SHOULD be declared here so that the agent's introspection of the response is grounded in the schema rather than ad-hoc.
 - **`streaming`** (optional, boolean, default `false`) — when `true`, the response body is a stream of chunks rather than a single response body. The `body` schema in this case describes one chunk's shape; the dispatch runtime is responsible for delivering each chunk through Stage 4's streaming surface. The chunk-delimiter convention (Server-Sent Events, newline-delimited JSON, length-prefixed framing, gRPC streaming) is part of the dispatch contract and is specified in Stage 4. This stage declares only that the response is streaming and that the schema describes one chunk.
+
+### Body format
+
+Not every `Provider` returns JSON. Binary downloads (S3 GetObject's file bytes, image-generation endpoints), XML documents (S3's metadata APIs, several SOAP-flavored services, and a long tail of legacy enterprise APIs), and plain-text bodies (CSV exports, log dumps) all need to participate in the response shape declaration without forcing a JSON Schema that doesn't fit.
+
+A response body object MAY include a `format` field that discriminates how the dispatch runtime decodes the body. The permitted values in `v1.0`:
+
+- **`json`** (default when omitted and `media_type` indicates JSON) — body parsed as JSON; `schema` describes the parsed JSON shape per JSON Schema 2020-12.
+- **`xml`** — body parsed as XML and converted to a dict per the implementation's XML-to-dict conversion; `schema` describes the post-conversion dict shape per JSON Schema 2020-12. The conversion rules are implementation-defined but two `Conforming Implementation`s SHOULD agree on the canonical shape: element names (with XML namespaces stripped) become keys; attributes become `@`-prefixed keys; child elements become nested dicts; repeated child elements with the same tag become lists; leaf-element text becomes a bare string; element-with-children text content becomes `#text` when non-empty.
+- **`binary`** — body returned as raw bytes; `schema` SHOULD be omitted because byte sequences don't have a meaningful JSON-shape schema. Callers consume the body through whatever language-level byte interface the implementation exposes.
+- **`text`** — body returned as a UTF-8 string; `schema` SHOULD be omitted. Useful for plain-text endpoints (log streams, simple CSV) where the agent treats the body as opaque text.
+
+Example response entry for an XML body:
+
+```json
+{
+  "200": {
+    "description": "ListBucketResult XML response.",
+    "body": {
+      "media_type": "application/xml",
+      "format": "xml",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "ListBucketResult": {
+            "type": "object",
+            "properties": {
+              "Name": { "type": "string" },
+              "IsTruncated": { "type": "string" },
+              "NextContinuationToken": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Example response entry for a binary body:
+
+```json
+{
+  "200": {
+    "description": "Object content.",
+    "body": {
+      "media_type": "application/octet-stream",
+      "format": "binary"
+    }
+  }
+}
+```
+
+The `format` field interacts with §3.4's pagination machinery. The cursor pagination pattern's `response_cursor_path` is a JSONPath expression evaluated against the dispatcher's parsed body; for `format: "xml"` responses, the JSONPath traverses the post-conversion dict (cursor at `$.ListBucketResult.NextContinuationToken` for S3's ListObjectsV2). The same applies to `failure_predicate.path` from the §3.3 body-predicate machinery.
+
+When `format` is omitted, the dispatcher decodes per `media_type`: `application/json` and any subtype matching `application/*+json` decode as JSON; types matching `*xml` decode as XML; `text/*` decode as text; everything else returns raw bytes. Implementations MAY refine these defaults but MUST honor an explicitly-declared `format` exactly.
+
+This affordance was added in the `v1.x` release that includes the §3.3 amendment for `format`. Per Principle 6 (wire-format stability), absence of `format` is the default; `Conforming Implementation`s built against earlier `v1.x` releases that pre-date the amendment continue to work for `format`-omitting artifacts and MAY decline silently per §2.8 for artifacts that declare `format`. Implementations SHOULD upgrade given how common non-JSON response bodies are in practice (S3 alone provides both binary and XML responses).
 
 ### Canonical error envelopes
 
