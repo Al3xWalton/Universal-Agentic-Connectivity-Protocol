@@ -21,6 +21,12 @@
     URL in a real browser, records every HTTP request the user makes
     during the session, and persists the result as an encrypted-at-
     rest HAR artifact under the supplied `secret://` reference.
+  - `uacp synthesize-from-capture --capture-ref <secret://> --intent
+    "<description>" --output <path/to/file.uacp>` — Stage 11.2 LLM-
+    driven synthesis pass that turns a captured session into a
+    draft `.uacp` file. Renders the inferred operations interactively
+    and gates persistence on explicit user approval per §3.12 +
+    §3.8 mandatory-user-review.
 """
 
 from __future__ import annotations
@@ -34,15 +40,26 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import IO, Callable
+from typing import IO, Any, Callable
 
 from .capture import (
     BrowserRecorder,
     CaptureArtifact,
     CaptureError,
     StoredCapture,
+    load_capture,
     store_capture,
 )
+from .connections.ingest_capture import (
+    CaptureSynthesisDraft,
+    DEFAULT_MAX_REFINEMENT_ROUNDS,
+    RefinementLimitExceeded,
+    SynthesisNotApprovedError,
+    confirm_and_persist as _confirm_capture_synthesis,
+    refine_synthesis,
+    synthesize_from_capture,
+)
+from .connections.ingest_nl import LLMCallable, build_default_openrouter_callable
 from .connections.ingest_openapi import (
     IngestionResult,
     from_discovery_doc,
@@ -400,6 +417,402 @@ def _persist_capture(
     )
 
 
+# ---------------------------------------------------------------------------
+# synthesize-from-capture — Stage 11.2 implementation per §3.12 + §3.8
+# ---------------------------------------------------------------------------
+
+
+_REVIEW_PROMPT_HELP = (
+    "Approve all (a), edit individual operations in $EDITOR (e), "
+    "refine via natural language (r), or abort (x)?"
+)
+
+
+def _render_synthesis_draft(draft: CaptureSynthesisDraft, *, stdout: IO[str]) -> None:
+    """Pretty-print the draft to ``stdout`` for user review.
+
+    Each operation: id, summary, method+path, parameters with
+    required/optional flags, provenance, source confidence.
+    Hallucinated operations the LLM tried to invent (and the
+    analyzer dropped) are surfaced separately so the operator can
+    see what was rejected.
+    """
+    print(file=stdout, flush=True)
+    print(
+        f"Synthesized {len(draft.operations)} operation(s) from capture "
+        f"{draft.capture_ref} (round {draft.refinement_round}, model {draft.model}):",
+        file=stdout,
+        flush=True,
+    )
+    print(file=stdout, flush=True)
+
+    if not draft.operations:
+        print("  (no operations matched the candidate list — try refining the intent or recapture)", file=stdout, flush=True)
+    for i, synth in enumerate(draft.operations, start=1):
+        op = synth.operation
+        prov = synth.provenance
+        print(f"  {i}. id: {op.get('id', '<no-id>')}", file=stdout, flush=True)
+        print(f"     summary: {op.get('summary', '<no-summary>')}", file=stdout, flush=True)
+        method = (op.get("request", {}) or {}).get("method", "?")
+        path = (op.get("request", {}) or {}).get("path", "?")
+        print(f"     {method} {path}", file=stdout, flush=True)
+        idemp = op.get("idempotency", "unknown")
+        print(f"     idempotency: {idemp}", file=stdout, flush=True)
+
+        req = op.get("request", {}) or {}
+        for kind in ("path_parameters", "query_parameters"):
+            schema = req.get(kind)
+            if isinstance(schema, dict) and schema.get("properties"):
+                required = set(schema.get("required", []) or [])
+                names = []
+                for name in schema["properties"]:
+                    flag = "required" if name in required else "optional"
+                    names.append(f"{name} ({flag})")
+                if names:
+                    print(f"     {kind}: {', '.join(names)}", file=stdout, flush=True)
+        body = req.get("body")
+        if isinstance(body, dict) and body.get("schema"):
+            body_schema = body["schema"]
+            if isinstance(body_schema, dict) and body_schema.get("properties"):
+                required = set(body_schema.get("required", []) or [])
+                names = []
+                for name in body_schema["properties"]:
+                    flag = "required" if name in required else "optional"
+                    names.append(f"{name} ({flag})")
+                if names:
+                    print(f"     body fields: {', '.join(names)}", file=stdout, flush=True)
+        print(
+            f"     provenance: source.type=capture confidence={prov.confidence} reviewed_at=(pending)",
+            file=stdout,
+            flush=True,
+        )
+        print(file=stdout, flush=True)
+
+    if draft.dropped_operations:
+        print(
+            f"  Dropped {len(draft.dropped_operations)} hallucinated operation(s) "
+            f"the LLM proposed but that didn't match any candidate cluster:",
+            file=stdout,
+            flush=True,
+        )
+        for d in draft.dropped_operations:
+            method = (d.get("request", {}) or {}).get("method", "?")
+            path = (d.get("request", {}) or {}).get("path", "?")
+            print(
+                f"    - id={d.get('id', '?')} {method} {path}", file=stdout, flush=True
+            )
+        print(file=stdout, flush=True)
+
+
+_DECISION_ALIASES = {
+    "a": "a",
+    "approve": "a",
+    "e": "e",
+    "edit": "e",
+    "r": "r",
+    "refine": "r",
+    "x": "x",
+    "abort": "x",
+}
+
+
+def _read_user_decision(prompt: str, stdin: IO[str], stdout: IO[str]) -> str:
+    """Read the user's review decision. Loops until a recognized
+    single-letter answer ('a' / 'e' / 'r' / 'x') is supplied (or the
+    word-form alias is typed in full). EOF treats as abort to avoid
+    silent persistence. Tests inject a StringIO stdin so the loop is
+    deterministic."""
+    while True:
+        print(prompt + " ", end="", file=stdout, flush=True)
+        line = stdin.readline()
+        if not line:  # EOF — treat as abort to avoid silent persistence
+            return "x"
+        choice = line.strip().lower()
+        if choice in _DECISION_ALIASES:
+            return _DECISION_ALIASES[choice]
+        print(
+            "  unrecognized choice; please answer 'a' / 'e' / 'r' / 'x'",
+            file=stdout,
+            flush=True,
+        )
+
+
+def _open_editor_for_draft(
+    draft: CaptureSynthesisDraft,
+    *,
+    authentication: dict[str, Any],
+    dispatch: dict[str, Any],
+    editor_command: str | None = None,
+) -> CaptureSynthesisDraft | None:
+    """Open the user's $EDITOR with the assembled .uacp draft as a
+    JSON file. On save, parse + validate the resulting artifact and
+    return a new CaptureSynthesisDraft reflecting the operator's
+    edits. Returns None on parse/validation failure (the CLI prompts
+    again).
+
+    The function is split from the CLI so tests can monkeypatch
+    ``editor_command`` to a no-op.
+    """
+    import os
+    import subprocess
+    import tempfile
+
+    artifact_dict = {
+        "$schema": "https://raw.githubusercontent.com/Al3xWalton/Universal-Agentic-Connectivity-Protocol/v1.1.0/schemas/uacp.json",
+        "authentication": authentication,
+        "dispatch": dispatch,
+        "operations": [dict(op.operation, source=op.provenance.to_dict()) for op in draft.operations],
+    }
+
+    with tempfile.NamedTemporaryFile(
+        mode="w+", suffix=".uacp", delete=False
+    ) as fh:
+        fh.write(json.dumps(artifact_dict, indent=2))
+        fh.flush()
+        path = fh.name
+
+    cmd = editor_command or os.environ.get("EDITOR", "vi")
+    try:
+        subprocess.call([cmd, path])  # nosec — operator-supplied editor
+    except FileNotFoundError:
+        log.warning("editor %r not found — falling back to no-op edit", cmd)
+
+    try:
+        edited = json.loads(Path(path).read_text())
+    except (OSError, json.JSONDecodeError) as e:
+        log.warning("edited file unreadable: %s", e)
+        return None
+    finally:
+        try:
+            Path(path).unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    edited_ops = edited.get("operations", [])
+    if not isinstance(edited_ops, list):
+        return None
+
+    from .connections.ingest_capture import CaptureProvenance, SynthesizedOperation
+
+    rebuilt: list[SynthesizedOperation] = []
+    for op in edited_ops:
+        if not isinstance(op, dict):
+            continue
+        source = op.pop("source", {})
+        if not isinstance(source, dict):
+            source = {}
+        prov = CaptureProvenance(
+            type="capture",
+            captured_at=source.get("captured_at", draft.captured_at),
+            user_intent=source.get("user_intent", draft.user_intent),
+            capture_ref=source.get("capture_ref", draft.capture_ref),
+            confidence=source.get("confidence", "medium"),
+            reviewed_at="",  # cleared so confirm_and_persist re-stamps
+        )
+        rebuilt.append(SynthesizedOperation(operation=op, provenance=prov))
+
+    from dataclasses import replace
+
+    return replace(draft, operations=rebuilt)
+
+
+def _emit_audit_user_reviewed(*, capture_ref: str, decision: str) -> None:
+    """Per §6.6: user-reviewed event with the operator's decision
+    (approve/edit/refine/abort). The decision letter is the
+    operator's signal; never carries any captured content."""
+    log.info(
+        "synthesis user-reviewed: capture_ref=%s decision=%s", capture_ref, decision
+    )
+
+
+def _emit_audit_file_persisted(
+    *, capture_ref: str, output_path: str, operation_count: int
+) -> None:
+    log.info(
+        "synthesis file-persisted: capture_ref=%s output=%s operations=%d",
+        capture_ref,
+        output_path,
+        operation_count,
+    )
+
+
+def _build_capture_llm(args: argparse.Namespace) -> LLMCallable:
+    """Construct the LLMCallable for capture synthesis. Pulled out
+    so tests can monkeypatch the constructor with a deterministic
+    mock."""
+    return build_default_openrouter_callable()
+
+
+def _cmd_synthesize_from_capture(args: argparse.Namespace) -> int:
+    """Run §3.12 + §3.8 LLM synthesis from a captured session.
+
+    The orchestration:
+
+      1. Validate the --capture-ref + --output args.
+      2. Build the LLMCallable (default OpenRouter; tests inject).
+      3. Call synthesize_from_capture() to get the initial draft.
+      4. Render the draft + prompt the user (approve / edit / refine
+         / abort).
+      5. Loop on refine until approved, edited, aborted, or the
+         3-round cap is reached.
+      6. On approve: stamp reviewed_at via confirm_and_persist
+         and write to --output. Exit 0.
+      7. On abort or cap-with-no-approval: do NOT persist. Exit 0
+         (clean exit; the capture remains; the user can re-run later).
+    """
+    output_path = Path(args.output).expanduser().resolve()
+    if output_path.exists() and not args.force:
+        print(
+            f"synthesize-from-capture: refusing to overwrite existing file "
+            f"{output_path} (use --force to overwrite).",
+            file=sys.stderr,
+        )
+        return 2
+
+    try:
+        SecretURI.parse(args.capture_ref)
+    except ValueError as e:
+        print(f"synthesize-from-capture: bad --capture-ref: {e}", file=sys.stderr)
+        return 2
+
+    if not args.intent.strip():
+        print(
+            "synthesize-from-capture: --intent must be non-empty.",
+            file=sys.stderr,
+        )
+        return 2
+
+    try:
+        llm = _build_capture_llm(args)
+    except Exception as e:
+        print(f"synthesize-from-capture: LLM init failed: {e}", file=sys.stderr)
+        return 3
+
+    try:
+        draft = synthesize_from_capture(
+            capture_ref=args.capture_ref,
+            user_intent=args.intent,
+            llm=llm,
+        )
+    except Exception as e:
+        print(f"synthesize-from-capture: synthesis failed: {e}", file=sys.stderr)
+        return 4
+
+    auth_block: dict[str, Any] = {}
+    dispatch_block: dict[str, Any] = {"base_url": f"https://{draft.analysis.primary_host}"} if draft.analysis.primary_host else {}
+
+    return _run_review_loop(
+        draft=draft,
+        llm=llm,
+        output_path=output_path,
+        authentication=auth_block,
+        dispatch=dispatch_block,
+        stdin=sys.stdin,
+        stdout=sys.stdout,
+    )
+
+
+def _run_review_loop(
+    *,
+    draft: CaptureSynthesisDraft,
+    llm: LLMCallable,
+    output_path: Path,
+    authentication: dict[str, Any],
+    dispatch: dict[str, Any],
+    stdin: IO[str],
+    stdout: IO[str],
+    editor_command: str | None = None,
+) -> int:
+    """The interactive review loop. Pulled out so tests can drive it
+    with mocked stdin / stdout / LLM."""
+
+    while True:
+        _render_synthesis_draft(draft, stdout=stdout)
+        choice = _read_user_decision(_REVIEW_PROMPT_HELP, stdin, stdout)
+        _emit_audit_user_reviewed(
+            capture_ref=draft.capture_ref, decision=choice
+        )
+
+        if choice == "a":
+            try:
+                _confirm_capture_synthesis(
+                    draft,
+                    approved=True,
+                    output_path=str(output_path),
+                    authentication=authentication or None,
+                    dispatch=dispatch or None,
+                )
+            except SynthesisNotApprovedError as e:
+                # Defensive: confirm_and_persist enforces the gate
+                # explicitly. Should never trigger here since we
+                # passed approved=True, but a future refactor could
+                # break this and we want a clear failure.
+                print(f"synthesize-from-capture: {e}", file=sys.stderr)
+                return 5
+            _emit_audit_file_persisted(
+                capture_ref=draft.capture_ref,
+                output_path=str(output_path),
+                operation_count=len(draft.operations),
+            )
+            print(
+                f"\nApproved. Wrote {len(draft.operations)} operation(s) to "
+                f"{output_path}.",
+                file=stdout,
+                flush=True,
+            )
+            return 0
+
+        if choice == "e":
+            edited = _open_editor_for_draft(
+                draft,
+                authentication=authentication,
+                dispatch=dispatch,
+                editor_command=editor_command,
+            )
+            if edited is None:
+                print(
+                    "  edit failed to parse; keeping prior draft", file=stdout, flush=True
+                )
+                continue
+            draft = edited
+            # After an edit we drop back into the review loop so the
+            # user can approve / refine / abort the edited draft.
+            continue
+
+        if choice == "r":
+            print("  Describe what's wrong (one line):", file=stdout, flush=True)
+            line = stdin.readline()
+            if not line.strip():
+                print("  empty feedback; canceling refinement", file=stdout, flush=True)
+                continue
+            try:
+                draft = refine_synthesis(draft, line.strip(), llm=llm)
+            except RefinementLimitExceeded as e:
+                print(
+                    f"\n  {e}\n  Switch to manual editing of the draft .uacp "
+                    f"file or abort.",
+                    file=stdout,
+                    flush=True,
+                )
+                continue
+            except Exception as e:
+                print(
+                    f"  refinement failed: {e}", file=stdout, flush=True
+                )
+                continue
+            continue
+
+        # 'x' or unrecognized → abort
+        print(
+            "\nAborted. Capture artifact is still available at "
+            f"{draft.capture_ref}; re-run synthesize-from-capture later "
+            "to try again.",
+            file=stdout,
+            flush=True,
+        )
+        return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="uacp", description="UACP reference CLI")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -477,6 +890,42 @@ def main(argv: list[str] | None = None) -> int:
         help="optional provider name for audit-log + capture-id seeding",
     )
     p_capture_session.set_defaults(func=_cmd_capture_session)
+
+    p_synth = sub.add_parser(
+        "synthesize-from-capture",
+        help=(
+            "Run §3.12 + §3.8 LLM synthesis against a captured session. "
+            "Produces a draft .uacp file gated on explicit user approval."
+        ),
+    )
+    p_synth.add_argument(
+        "--capture-ref",
+        required=True,
+        help=(
+            "secret:// URI returned by `uacp capture-session --output ...` "
+            "(e.g. secret://local-keyring/example-capture)"
+        ),
+    )
+    p_synth.add_argument(
+        "--intent",
+        required=True,
+        help=(
+            "Natural-language description of what the user demonstrated "
+            "during the capture (e.g. 'I logged into Slack and sent a "
+            "message in #general')."
+        ),
+    )
+    p_synth.add_argument(
+        "--output",
+        required=True,
+        help="Path to write the synthesized .uacp file after approval.",
+    )
+    p_synth.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite --output if it already exists.",
+    )
+    p_synth.set_defaults(func=_cmd_synthesize_from_capture)
 
     args = parser.parse_args(argv)
     return int(args.func(args))

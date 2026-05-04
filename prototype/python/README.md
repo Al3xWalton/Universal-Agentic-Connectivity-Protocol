@@ -381,6 +381,53 @@ uv run playwright install chromium
 uv run pytest tests/integration/test_capture_session_live.py -m capture_integration
 ```
 
+## Operation synthesis from captures (v1.1)
+
+Stage 11.2 closes the §3.12 capture pipeline: a captured session (Stage 11.1) becomes a draft `.uacp` file via deterministic clustering + LLM synthesis, gated on explicit user approval per §3.12 + §3.8 mandatory-user-review.
+
+### Pipeline
+
+1. The CLI loads + decrypts the encrypted-at-rest capture via `secret://...` reference.
+2. `uacp_prototype.capture.analyzer.analyze_capture` clusters the captured requests into candidate operations (deterministic; no LLM): same-method-and-path-signature requests group together; variable-shaped path segments (UUID / integer / slug / hex / email) become path parameters; query parameters and body keys become candidate operation parameters with required/optional inference from frequency; third-party-domain requests + image/font/CSS/JS asset loads + favicons + OPTIONS preflights get filtered out as noise.
+3. `uacp_prototype.connections.ingest_capture.synthesize_from_capture` builds the LLM prompt from the structured AnalysisResult (the LLM never sees raw HAR), calls the LLM, parses the JSON response, drops any operations the LLM hallucinated outside the candidate-cluster set, and returns a `CaptureSynthesisDraft` with §3.12 provenance (`source.type=capture`, `captured_at`, `user_intent`, `capture_ref`, `confidence`; `reviewed_at` is unset until approval).
+4. The CLI renders the draft, prompts approve/edit/refine/abort, and only persists on explicit approval. The persisted `.uacp` file's `source.reviewed_at` field is the operator's signature; loading via `spec.loader.load` rejects any capture-sourced operation with `reviewed_at` missing or empty (spec-level enforcement, not just a UX prompt).
+
+### Running synthesis
+
+```bash
+# Step 1: capture (Stage 11.1)
+uv run python -m uacp_prototype.cli capture-session \
+  --initial-url https://api.example.com/ \
+  --output secret://local-keyring/example-capture
+
+# Step 2: synthesize
+uv run python -m uacp_prototype.cli synthesize-from-capture \
+  --capture-ref secret://local-keyring/example-capture \
+  --intent "I logged in and listed my projects." \
+  --output ./example.uacp
+```
+
+The interactive review prompt accepts:
+
+- `a` (or `approve`) — write the draft to `--output` with `source.reviewed_at` stamped at the current UTC time.
+- `e` (or `edit`) — open the assembled `.uacp` JSON in `$EDITOR`; on save, the edited file replaces the in-memory draft and the CLI returns to the review prompt.
+- `r` (or `refine`) — prompt for one-line natural-language feedback and call the LLM again with the prior draft + the operator's correction. The refinement loop is capped at 3 rounds per the §3.12 + §3.8 stability rule (after that, the operator is told to switch to manual editing).
+- `x` (or `abort`) — exit without writing. The capture artifact remains; re-run synthesize-from-capture later to try again.
+
+### Auth block selection
+
+The synthesis pipeline produces the **operations** block; the **authentication** block is the operator's decision and is not synthesized. The drafted `.uacp` file ships with `authentication: {}` and a `dispatch.base_url` derived from the capture's primary host. The operator fills in the matching auth block before the file passes `uacp validate` — typically `session_cookie` (per §2.10) for capture-driven flows against grey-zone providers, or one of the OAuth methods for providers with public APIs. Auth-block-from-capture inference (e.g., detecting the appropriate `session_cookie` cookie whitelist from the capture's `auth_artifacts` summary) is a future-`v1.x` candidate; Stage 11.2 stops at the operations level.
+
+### LLM provider
+
+The synthesis flow uses the same `LLMCallable` Protocol as the §3.8 inference path (see `connections/ingest_nl.py`). The default callable wraps OpenRouter (`build_default_openrouter_callable`); operators set `OPENROUTER_API_KEY` + optional `UACP_LLM_MODEL` (default `anthropic/claude-haiku-4.5`). Tests inject a deterministic mock LLM via the same Protocol — synthesis quality testing happens against recorded responses, not live API calls.
+
+Per §6.6 the synthesis emits four audit events: `synthesis started` (capture_ref + candidate count + intent_len), `synthesis llm-call completed` (kept_ops + dropped_ops + raw_chars), `synthesis user-reviewed` (decision letter), `synthesis file-persisted` (output_path + operation_count). Audit payloads NEVER carry the operator's full intent text or any captured cookie / Authorization values — the recorder + analyzer's auth-value scrubbing posture extends through the synthesis layer.
+
+### Hallucination drop
+
+The brief's hard rule "an LLM that returns operations beyond the candidate list should have those operations dropped at validation" is enforced mechanically by `_filter_to_candidates`: the LLM's output operations are matched against the analyzer's `(method, path_template)` set, and any operation that doesn't match a candidate lands in `draft.dropped_operations` (visible to the operator via the review render) but never in the persisted file. Even if the LLM ignores the system-prompt instruction not to invent, the filter catches it.
+
 ## Spec correspondence
 
 Every module's docstring names the spec sections it implements. Module-level test files under `tests/unit/` exercise the spec's MUSTs at the unit level. The end-to-end mock test under `tests/unit/test_end_to_end_mock.py` ties the layers together.
