@@ -167,9 +167,21 @@ class ResponseEntry(StrictModel):
                 if not isinstance(v["$ref"], str) or not v["$ref"].startswith("#/definitions/"):
                     raise ValueError("response body $ref must be a local pointer of the form '#/definitions/<name>'")
                 return v
-            if "schema" in v:
+            if "schema" in v or "format" in v:
+                # Inline form with `media_type` + `schema` (JSON shape) OR
+                # with `format` discriminator (xml / binary / text /
+                # json) per the §3.3 Stage 8c amendment. `format` makes
+                # `schema` optional for non-JSON bodies — XML schemas
+                # describe the post-parse dict; binary and text bodies
+                # are opaque to validation.
+                fmt = v.get("format")
+                if fmt is not None and fmt not in {"json", "xml", "binary", "text"}:
+                    raise ValueError(
+                        f"response body format must be one of "
+                        f"{{'json', 'xml', 'binary', 'text'}}; got {fmt!r}"
+                    )
                 return v
-            raise ValueError("response body object must be either {$ref: '#/definitions/...'} or {media_type, schema}")
+            raise ValueError("response body object must be either {$ref: '#/definitions/...'} or {media_type, schema} or {media_type, format[, schema]}")
         raise ValueError("response body must be 'none', an inline object, or a $ref object")
 
 

@@ -32,6 +32,7 @@ from ..spec.models import (
     UACPArtifact,
 )
 from ..auth.base import AuthMethod
+from .body_format import decode_response_body
 from .envelope import (
     evaluate_failure_predicate,
     extract_failure_details,
@@ -343,6 +344,10 @@ class DispatchClient:
         body: Any,
         extra_headers: dict[str, str],
     ) -> DispatchResult:
+        # Stash the in-flight operation so _build_success and
+        # _check_failure_predicate can route the response through the
+        # operation's declared format / failure_predicate.
+        self._current_operation = op
         cfg = self.artifact.dispatch
         url = _build_url(cfg.base_url, op.request, params=path_params, query=query)
         _https_only(url)
@@ -611,15 +616,44 @@ class DispatchClient:
     # ------------------------------------------------------------------
 
     def _build_success(self, response: httpx.Response) -> DispatchSuccess:
-        try:
-            body: Any = response.json()
-        except (ValueError, httpx.DecodingError):
-            body = response.content
+        # Per the §3.3 Stage 8c amendment, response entries may declare
+        # a `format` discriminator (json / xml / binary / text). When
+        # the matched entry's body declares format, decode accordingly;
+        # otherwise fall back to the JSON-default behavior.
+        operation = self._operation_for_response(response)
+        format_hint: str | None = None
+        media_type: str | None = response.headers.get("Content-Type")
+        if operation is not None:
+            entry = select_response_entry(operation.response, response.status_code)
+            if entry is not None and isinstance(entry.body, dict):
+                format_hint = entry.body.get("format")
+                # When the artifact declares media_type, prefer it over
+                # the wire Content-Type for routing. The wire Content-
+                # Type may include charset suffixes that confuse simple
+                # prefix matching.
+                if entry.body.get("media_type"):
+                    media_type = entry.body["media_type"]
+        body = decode_response_body(
+            response.content,
+            format=format_hint,
+            media_type=media_type,
+        )
         return DispatchSuccess(
             status=response.status_code,
             headers=dict(response.headers),
             body=body,
         )
+
+    def _operation_for_response(self, response: httpx.Response) -> Operation | None:
+        """Return the operation whose response is being decoded.
+
+        The dispatch client is constructed with a single artifact and
+        invokes one operation per dispatch call. We track the
+        in-flight operation on the instance so _build_success can find
+        it; for v1 the prototype keeps it simple by stashing in
+        ``_current_operation``.
+        """
+        return getattr(self, "_current_operation", None)
 
     def _check_failure_predicate(
         self, op: Operation, response: httpx.Response
