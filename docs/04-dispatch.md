@@ -521,7 +521,57 @@ A `Conforming Implementation` MAY:
 - Allow caller-supplied idempotency keys overriding the auto-generated value per §4.8.
 - Allow the `Idempotency-Key` header name to be configured via `dispatch.idempotency_key_header` per §4.8.
 - Refine retry decisions on a per-operation basis using application-layer signals beyond the spec.
+- Substitute pluggable HTTP transport backends per §4.10 (added in `v1.1`), provided the externally-observable behavior across §4.1 — §4.9 is preserved.
 
 ### Cumulative conformance
 
 The cumulative effect of the above is that a `Conforming Implementation` of `v1.x` reliably dispatches against any well-formed `.uacp` artifact, retries safely under transient failure without risking duplicated side effects, paginates without unbounded loops, normalizes failures into a uniform vocabulary regardless of `Provider`-specific error shapes, and exposes streaming responses through a small set of recognized transport patterns. The dispatch runtime is the layer where the `.uacp` artifact's declarative description meets the wire — this stage's job is to make that meeting deterministic.
+
+## 4.10 Pluggable transport backends
+
+*Added in `v1.1`.* UACP does not mandate any specific HTTP client library. Implementations MAY substitute different transport backends per `Connection`, per authentication method, or per operation, provided the externally-observable behavior of §4.1 — §4.9 is preserved.
+
+### Why pluggable transports
+
+The dispatch sections 4.1 — 4.9 describe a uniform contract — HTTPS-only, retry policy, pagination loops, rate-limit handling, error normalization, streaming patterns. They describe *what* the runtime exposes to the caller, not *how* the request is sent on the wire. A `Conforming Implementation` of `v1.0` is free to use any reasonable HTTP client to send the request; the spec does not name `httpx`, `requests`, `aiohttp`, `OkHttp`, or any other library, and it never has.
+
+`v1.1` makes this freedom explicit. The motivation is anti-bot resilience for the §3.12 / §2.10 capture-plus-`session_cookie` pattern: providers like Google NotebookLM, Cloudflare-protected SaaS surfaces, and similar grey-zone targets serve different responses to default `httpx` (or any plain-Python) clients than they do to a real browser, on the strength of TLS fingerprinting (JA3/JA4), HTTP/2 frame ordering, header-order matching, and similar request-shape signals. Implementations integrating with such providers benefit from substituting a stealth-oriented backend (Scrapling, curl-impersonate, Playwright-driven browsers) for the affected `Connection`s, while keeping the default backend for the long tail of well-behaved REST APIs where stealth is unnecessary overhead.
+
+§4.10 codifies that a backend swap is permitted *only when* the swap preserves the §4.1 — §4.9 contract. Anti-bot evasion is not an excuse for skipping retries, ignoring rate limits, dropping audit logs, or surfacing non-canonical errors.
+
+### Conformance posture
+
+A `Conforming Implementation` MAY substitute the default HTTP transport with an alternative backend, per `Connection` or per authentication method. When it does, it MUST satisfy the following constraints regardless of which backend is in use:
+
+- **HTTPS-only transport.** Per §4.1 / §4.2. The substitute backend MUST reject `http://` URLs and MUST refuse to negotiate TLS 1.1 or below. Stealth backends that emulate a real browser MUST do so only over HTTPS; emulating a browser over plaintext is forbidden.
+- **Retry policy.** Per §4.3. The substitute backend MUST honor the default retry policy (3 attempts, exponential backoff, ±25% jitter) for transient failures and `5xx` responses on idempotent operations. Per-operation `retry` overrides apply identically across backends.
+- **Pagination loops.** Per §4.4. The pagination runtime is implemented above the transport layer; the substitute backend MUST NOT change the pagination contract or the per-call max-pages safety limit.
+- **Rate-limit handling.** Per §4.5. The substitute backend MUST honor `Retry-After` on `429`, MUST consume `X-RateLimit-Remaining` / `X-RateLimit-Reset` advisory headers when present, and MUST participate in the cross-operation rate-budget pooling. Stealth backends in particular MUST NOT bypass `Provider`-side rate limits as a feature; backing off on `429` is a `Provider`-respect-norm that doesn't bend just because the request shape mimics a browser.
+- **Canonical error shape.** Per §4.6. The substitute backend MUST surface failures in the canonical `{status, code, message, details, raw}` shape and MUST map HTTP status to canonical `code` per the §4.6 table. Backend-specific exception types MUST NOT leak past the dispatch boundary.
+- **Streaming response contract.** Per §4.7. When the substitute backend supports streaming, it MUST expose the recognized patterns (chunked, SSE, NDJSON, optionally WebSocket) with the parser expectations of §4.7. A backend that cannot stream MUST surface the operation's streaming response as `upstream_error` rather than buffering silently.
+- **Audit logging.** Per §6.6. Every dispatch MUST emit the `dispatch.start` / `dispatch.success` / `dispatch.failure` audit events the spec requires, with the per-event field set unchanged. The transport-backend identity MAY be included as an additional field in the audit event (recommended for forensics on stealth-backed connections), but the floor field set is unchanged.
+- **Idempotency-key injection.** Per §4.8. The substitute backend MUST inject the configured idempotency-key header on `POST` / `PATCH` operations declared `idempotent` when the implementation supports the §4.8 MAY behavior; the backend MUST NOT silently drop the key.
+
+The substitute backend MAY add capabilities the default backend lacks — TLS fingerprint matching, browser-equivalent header ordering, cookie persistence beyond a single dispatch, JS-evaluation for challenge pages — provided these additions are observably equivalent at the §4.1 — §4.9 interface to a request that succeeded directly. Anti-bot bypass is observably equivalent to "the request worked"; nothing in §4.10 prevents implementations from making that more likely.
+
+### Selection mechanism
+
+The transport selection is implementation-defined. Recommended patterns:
+
+- **Default backend per `Connection`.** Most `Connection`s use the implementation's default backend (typically a vanilla HTTPS client). This is the existing `v1.0` posture and remains the silent default.
+- **Auth-method affinity.** Implementations MAY couple specific authentication methods to specific backends. The canonical pairing: `session_cookie` connections per §2.10 default to a stealth backend (where available) on the rationale that captures and session replay typically target providers with browser-fingerprint defenses, while OAuth-shaped connections stay on the default backend.
+- **Per-artifact override.** A `.uacp` artifact MAY declare `dispatch.transport` as an optional string field. The value names the backend to use for every operation in the artifact. Recommended values: `"default"` (the implementation's default backend), `"stealth"` (an anti-bot-evading backend, when the implementation provides one), or any implementation-specific identifier with an `x-` prefix per §7.3. Implementations that do not recognize the named transport MUST fall back to the default backend with a warning surfaced to the user, rather than refuse to dispatch.
+
+Implementations MAY support transport selection at finer granularity (per-operation, per-call) but UACP does not require it. Per-`Connection` or per-artifact selection is sufficient for the v1.1 use cases.
+
+### Substitution and observability
+
+Implementations that support pluggable backends SHOULD make the active backend visible to the operator — through a CLI flag, a runtime API, an audit-event field, or equivalent — so debugging and forensics can distinguish a default-backend failure from a stealth-backend failure. The audit events at §6.6 are the recommended carrier; implementations MAY include `transport: "<backend-name>"` in the per-event detail map.
+
+Per §3.11's round-trip rule, implementations MUST preserve the artifact's `dispatch.transport` field on round-trip even when the implementation does not recognize the named backend. The unknown-field forward-compatibility rule covers the case where a `v1.2` artifact names a backend introduced after the loading implementation was built.
+
+### Out of scope for `v1.1`
+
+§4.10 does not define a registry of backend names. The `"default"` and `"stealth"` strings are conventions; the spec does not enumerate the implementations that satisfy them. A future `v1.x` minor MAY register specific backend identifiers (e.g., `httpx`, `scrapling`, `curl-impersonate`) under §2.8's registration mechanism if implementations report fragmentation that warrants it. Until that lands, implementations document their supported backends in their own user-facing documentation; the conformance posture above is what UACP enforces at the spec layer.
+
+§4.10 also does not specify how the substitute backend obtains its configuration (cookie jars, browser profiles, fingerprint definitions). Configuration is implementation-specific; the captured-session artifact per §3.12 is the closest UACP comes to specifying the inputs a stealth backend consumes, and §2.10's `storage_state_ref` is the dispatch-time credential surface.

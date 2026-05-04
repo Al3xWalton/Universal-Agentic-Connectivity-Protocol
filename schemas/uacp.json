@@ -232,7 +232,12 @@
         "default_timeout_ms": { "type": "integer", "minimum": 1, "default": 30000 },
         "default_user_agent": { "type": "string" },
         "idempotency_key_header": { "type": "string", "default": "Idempotency-Key" },
-        "allow_method_changing_redirects": { "type": "boolean", "default": false }
+        "allow_method_changing_redirects": { "type": "boolean", "default": false },
+        "transport": {
+          "type": "string",
+          "pattern": "^([a-z][a-z0-9_-]*|x-[a-z0-9_-]+)$",
+          "description": "Per §4.10 (added in v1.1): optional transport-backend hint. Recommended values: 'default', 'stealth'. Implementation-specific identifiers MUST be x-namespaced per §7.3. Implementations that do not recognize the named transport MUST fall back to their default backend with a user-visible warning, not refuse to dispatch."
+        }
       },
       "additionalProperties": true
     },
