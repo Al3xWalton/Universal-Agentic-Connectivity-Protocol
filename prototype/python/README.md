@@ -47,9 +47,9 @@ uv run uacp ingest-openapi https://www.googleapis.com/discovery/v1/apis/gmail/v1
 
 This prototype satisfies the `MUST` requirements across:
 
-- **Stage 2** (authentication) — OAuth 2.0 authorization-code with PKCE; OAuth 2.0 client-credentials, OAuth 2.0 device-code, OAuth 1.0a, AWS SigV4, HMAC-signature, API-key (header / query), and `custom_auth` are stubs that raise `NotImplementedError` and will be implemented in subsequent provider sessions (Stage 8b through 8e).
+- **Stage 2** (authentication) — OAuth 2.0 authorization-code with PKCE; Slack's workspace-scoped OAuth flavor (Stage 8b, registered as `x-oauth2-workspace` per §7.3 in-development extension); OAuth 2.0 client-credentials, OAuth 2.0 device-code, OAuth 1.0a, AWS SigV4, HMAC-signature, API-key (header / query), and `custom_auth` are stubs that raise `NotImplementedError` and will be implemented in subsequent provider sessions (Stage 8c through 8e).
 - **Stage 3** (schema) — hand-authored canonical JSON loading and OpenAPI 3.x / Google discovery ingestion. `curl`-paste and LLM inference are stubs.
-- **Stage 4** (dispatch) — HTTPS-only, retry policy, pagination patterns (cursor / offset / link_header / none), canonical error shape, rate-limit handling. Streaming is placeholder.
+- **Stage 4** (dispatch) — HTTPS-only, retry policy, pagination patterns (cursor / offset / link_header / none), canonical error shape, rate-limit handling, body-predicate failure detection per §3.3 + §4.6 (Stage 8b — converts 200-with-ok=false envelopes into canonical DispatchErrors). Streaming is placeholder.
 - **Stage 5** (lifecycle) — seven-state machine, lazy refresh (the `MUST` floor; proactive refresh is `SHOULD` and not implemented in this prototype), refresh-token rotation handled atomically.
 - **Stage 6** (security) — `secret://` resolver, AES-256-GCM envelope encryption-at-rest, `local-keyring` simulated as a filesystem store at `~/.uacp/secrets/`, master key at `~/.uacp/master.key`. `vault` and `aws-secrets-manager` resolvers raise `NotImplementedError` until corresponding provider sessions land.
 
@@ -79,6 +79,28 @@ The integration tests under `tests/providers/test_google.py` execute real OAuth 
    The first run launches the OAuth flow in a browser; subsequent runs reuse the persisted token under `~/.uacp/secrets/`.
 
 The test sends an email to the test address and lists the next ten calendar events on the test account. Both are non-destructive against the test account (the email lands in the user's own inbox; the list is read-only).
+
+### Slack integration tests
+
+The integration tests under `tests/providers/test_slack.py` exercise the workspace-scoped OAuth flow + chat.postMessage + conversations.list. They are skipped by default; running them requires:
+
+1. **Create a Slack app** at https://api.slack.com/apps → "Create New App" → "From scratch". Choose a development workspace you control.
+2. **OAuth & Permissions** → Bot Token Scopes → add `chat:write` and `channels:read` (optionally `channels:history` for future message-read tests). Under "Redirect URLs" add `http://localhost:8765/oauth/callback`.
+3. **Install to Workspace.** Copy the Client ID and Client Secret from "Basic Information".
+4. **Pick or create a test channel** in the workspace. After install, `/invite @<botname>` from the channel so the bot is a member. Capture the channel id (`Cxxxxxxxxxx`).
+5. **Populate `.env` in `prototype/python/`** with:
+   ```
+   UACP_SLACK_CLIENT_ID=<client id>
+   UACP_SLACK_CLIENT_SECRET=<client secret>
+   UACP_SLACK_TEST_CHANNEL_ID=Cxxxxxxxxxx
+   UACP_SLACK_REDIRECT_URI=http://localhost:8765/oauth/callback
+   ```
+6. **Run the integration tests**:
+   ```bash
+   uv run pytest tests/providers/test_slack.py -m integration
+   ```
+
+The five tests are: OAuth flow end-to-end (the fixture itself proves it; the named test asserts the parsed tokens carry the expected `xoxb-` prefix and team metadata); chat.postMessage success (sends a real message to the test channel); chat.postMessage with an invalid channel id (asserts the §3.3/§4.6 body-predicate machinery converts Slack's 200-with-ok=false-error=channel_not_found into a canonical `DispatchError(status=200, code=not_found)`); conversations.list single page; conversations.list paginated through the cursor (`response_metadata.next_cursor` — exercises the §3.4 cursor pattern against a deeply-nested cursor location, capped at 3 pages).
 
 ## Spec correspondence
 

@@ -1,0 +1,131 @@
+{
+  "$schema": "https://uacp.spec/v1/schema.json",
+  "name": "slack-conversations-list",
+  "version": "0.1.0",
+  "description": "Slack conversations.list — lists conversations (channels, DMs, groups) the bot is a member of. Cursor-paginated via response_metadata.next_cursor (nested cursor field — exercises §3.4's JSONPath subset against a deeply-nested cursor location).",
+  "authentication": {
+    "method": "x-oauth2-workspace",
+    "authorization_endpoint": "https://slack.com/oauth/v2/authorize",
+    "token_endpoint": "https://slack.com/api/oauth.v2.access",
+    "client_id": "REPLACED_AT_RUNTIME",
+    "client_secret_ref": "secret://local-keyring/slack#client_secret",
+    "scopes": ["channels:read"],
+    "user_scopes": [],
+    "redirect_uri": "http://localhost:8765/oauth/callback",
+    "code_challenge_method": "S256"
+  },
+  "dispatch": {
+    "base_url": "https://slack.com",
+    "default_headers": {
+      "Accept": "application/json"
+    },
+    "default_timeout_ms": 30000,
+    "default_user_agent": "uacp-prototype/0.1"
+  },
+  "definitions": {
+    "Conversation": {
+      "type": "object",
+      "properties": {
+        "id": {"type": "string"},
+        "name": {"type": "string"},
+        "is_channel": {"type": "boolean"},
+        "is_private": {"type": "boolean"},
+        "is_archived": {"type": "boolean"},
+        "num_members": {"type": "integer"}
+      }
+    },
+    "ConversationsListEnvelope": {
+      "type": "object",
+      "description": "Slack envelope. ok=true on logical success; ok=false carries error string. response_metadata.next_cursor is the cursor for the subsequent page (empty string when no more pages).",
+      "properties": {
+        "ok": {"type": "boolean"},
+        "channels": {
+          "type": "array",
+          "items": {"$ref": "#/definitions/Conversation"}
+        },
+        "response_metadata": {
+          "type": "object",
+          "properties": {
+            "next_cursor": {"type": "string"}
+          }
+        },
+        "error": {"type": "string"}
+      }
+    }
+  },
+  "operations": [
+    {
+      "id": "conversations_list",
+      "summary": "List Slack conversations the bot can see.",
+      "description": "Returns conversations matching the optional `types` filter (public_channel, private_channel, mpim, im). Cursor-paginated via response_metadata.next_cursor. Per §4.4 the cursor pagination's response_cursor_path is the nested JSONPath $.response_metadata.next_cursor.",
+      "tags": ["conversations", "read"],
+      "idempotency": "idempotent",
+      "request": {
+        "method": "GET",
+        "path": "/api/conversations.list",
+        "query_parameters": {
+          "type": "object",
+          "properties": {
+            "cursor": {
+              "type": "string",
+              "description": "Opaque cursor from a prior call's response_metadata.next_cursor. Omitted on the first call."
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000,
+              "default": 100,
+              "description": "Maximum conversations per page."
+            },
+            "types": {
+              "type": "string",
+              "description": "Comma-separated filter: public_channel, private_channel, mpim, im. Defaults to public_channel."
+            },
+            "exclude_archived": {
+              "type": "boolean",
+              "default": true
+            }
+          }
+        }
+      },
+      "response": {
+        "200": {
+          "description": "Slack envelope. ok=true on logical success carries the channels array + response_metadata.next_cursor; ok=false carries an error string.",
+          "body": {
+            "media_type": "application/json",
+            "schema": {"$ref": "#/definitions/ConversationsListEnvelope"}
+          },
+          "failure_predicate": {
+            "path": "$.ok",
+            "equals": false,
+            "code_path": "$.error"
+          }
+        },
+        "429": {
+          "description": "Rate limited. §4.5 retry handling applies.",
+          "body": {
+            "media_type": "application/json",
+            "schema": {"$ref": "#/definitions/ConversationsListEnvelope"}
+          }
+        },
+        "default": {
+          "description": "Transport-level or unexpected provider error.",
+          "body": {
+            "media_type": "application/json",
+            "schema": {"$ref": "#/definitions/ConversationsListEnvelope"}
+          }
+        }
+      },
+      "pagination": {
+        "pattern": "cursor",
+        "request_cursor_parameter": "cursor",
+        "response_cursor_path": "$.response_metadata.next_cursor"
+      },
+      "source": {
+        "type": "openapi",
+        "url": "https://api.slack.com/methods/conversations.list",
+        "ingested_at": "2026-05-04T03:30:00Z"
+      }
+    }
+  ]
+}

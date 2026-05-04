@@ -1,0 +1,114 @@
+{
+  "$schema": "https://uacp.spec/v1/schema.json",
+  "name": "slack-chat-postmessage",
+  "version": "0.1.0",
+  "description": "Slack chat.postMessage — sends a message to a channel via the Slack Web API. Authenticates with a workspace bot token (xoxb-...).",
+  "authentication": {
+    "method": "x-oauth2-workspace",
+    "authorization_endpoint": "https://slack.com/oauth/v2/authorize",
+    "token_endpoint": "https://slack.com/api/oauth.v2.access",
+    "client_id": "REPLACED_AT_RUNTIME",
+    "client_secret_ref": "secret://local-keyring/slack#client_secret",
+    "scopes": ["chat:write", "channels:read"],
+    "user_scopes": [],
+    "redirect_uri": "http://localhost:8765/oauth/callback",
+    "code_challenge_method": "S256"
+  },
+  "dispatch": {
+    "base_url": "https://slack.com",
+    "default_headers": {
+      "Accept": "application/json"
+    },
+    "default_timeout_ms": 30000,
+    "default_user_agent": "uacp-prototype/0.1"
+  },
+  "definitions": {
+    "ChatPostMessageRequest": {
+      "type": "object",
+      "required": ["channel", "text"],
+      "properties": {
+        "channel": {
+          "type": "string",
+          "description": "Channel id (Cxxx), DM id (Dxxx), or channel name."
+        },
+        "text": {
+          "type": "string",
+          "description": "Plaintext or mrkdwn message body."
+        },
+        "thread_ts": {
+          "type": "string",
+          "description": "Optional parent message ts for threaded replies."
+        },
+        "blocks": {
+          "type": "array",
+          "items": {"type": "object"},
+          "description": "Optional Block Kit blocks."
+        }
+      }
+    },
+    "ChatPostMessageEnvelope": {
+      "type": "object",
+      "description": "Slack response envelope. ok=true on logical success; ok=false carries an error string discriminator. HTTP status is 200 in both cases.",
+      "properties": {
+        "ok": {"type": "boolean"},
+        "ts": {"type": "string", "description": "Message timestamp (success only)."},
+        "channel": {"type": "string", "description": "Channel id (success only)."},
+        "message": {"type": "object", "description": "Posted message echo (success only)."},
+        "error": {
+          "type": "string",
+          "description": "Slack error string (failure only). Examples: channel_not_found, not_authed, missing_scope, rate_limited, invalid_blocks, too_many_attachments."
+        }
+      }
+    }
+  },
+  "operations": [
+    {
+      "id": "chat_postmessage",
+      "summary": "Send a message to a Slack channel.",
+      "description": "Posts a message via Slack's chat.postMessage Web API. Authenticates with a bot token (xoxb-...) acquired through the workspace-scoped OAuth flow. Idempotency note: per Slack's docs the operation is not idempotent (re-issuing the same call posts duplicate messages); the dispatch runtime MUST NOT retry automatically per Stage 4 §4.3. The 200-with-ok=false response shape is handled via the failure_predicate per §3.3 / §4.6.",
+      "tags": ["chat", "send"],
+      "idempotency": "not_idempotent",
+      "request": {
+        "method": "POST",
+        "path": "/api/chat.postMessage",
+        "body": {
+          "media_type": "application/json",
+          "schema": {"$ref": "#/definitions/ChatPostMessageRequest"}
+        }
+      },
+      "response": {
+        "200": {
+          "description": "Slack envelope. ok=true on logical success; ok=false on logical failure (the failure_predicate converts this case into a canonical DispatchError per §4.6).",
+          "body": {
+            "media_type": "application/json",
+            "schema": {"$ref": "#/definitions/ChatPostMessageEnvelope"}
+          },
+          "failure_predicate": {
+            "path": "$.ok",
+            "equals": false,
+            "code_path": "$.error"
+          }
+        },
+        "429": {
+          "description": "Rate limited (Slack returns 429 with Retry-After when chat.postMessage exceeds ~1 message/second/channel). §4.5 retry handling applies.",
+          "body": {
+            "media_type": "application/json",
+            "schema": {"$ref": "#/definitions/ChatPostMessageEnvelope"}
+          }
+        },
+        "default": {
+          "description": "Transport-level or unexpected provider error.",
+          "body": {
+            "media_type": "application/json",
+            "schema": {"$ref": "#/definitions/ChatPostMessageEnvelope"}
+          }
+        }
+      },
+      "source": {
+        "type": "openapi",
+        "url": "https://api.slack.com/methods/chat.postMessage",
+        "ingested_at": "2026-05-04T03:30:00Z"
+      }
+    }
+  ]
+}
