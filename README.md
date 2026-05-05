@@ -127,4 +127,4 @@ UACP specification documents and the reference implementation are licensed under
 
 UACP is a personal project maintained by Alexander Walton. `v1.x` evolves under maintainer stewardship; outside contributors are welcome — see [`CONTRIBUTING.md`](./CONTRIBUTING.md). The full governance posture (including the path to `v2` and the trademark stance) is in [`GOVERNANCE.md`](./GOVERNANCE.md). Security concerns are handled through [`SECURITY.md`](./SECURITY.md). All participation is governed by the [`Code of Conduct`](./CODE_OF_CONDUCT.md).
 
-# Please note this project is entirely vibecoded and built intially for a besppke purpose, use at your own risk.
+# Please note this project is entirely vibecoded and built intially for a bespoke purpose, use at your own risk.
